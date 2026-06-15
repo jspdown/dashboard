@@ -22,6 +22,7 @@ permissions:
 env:
   # Both skopeo invocations (login + the publish app's copy) share one authfile.
   REGISTRY_AUTH_FILE: ${{ github.workspace }}/auth.json
+  CONTAINERS_REGISTRIES_CONF: /dev/null
 
 jobs:
   image:
