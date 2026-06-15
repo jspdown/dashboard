@@ -1,0 +1,35 @@
+name: cleanup-pr-screenshots
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: main
+
+      - name: Remove screenshots for the merged PR
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          dir=".github/pr-screenshots/$PR"
+          if [ ! -d "$dir" ]; then
+            echo "No screenshots for PR #$PR, nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
+          git rm -r "$dir"
+          git commit -m "Cleanup screenshots for #$PR [skip ci]"
+          git push

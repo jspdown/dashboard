@@ -1,0 +1,22 @@
+# Node
+node_modules/
+app/dist/
+
+# Local env
+.env
+.env.local
+
+# Go build output
+/api/dashboard
+
+# Nix build artifacts
+/result
+/result-*
+.direnv/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+.scratch

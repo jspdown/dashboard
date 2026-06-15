@@ -1,0 +1,45 @@
+name: release
+
+# Cut a release by pushing a SemVer tag:
+#   git tag v1.2.3 && git push origin v1.2.3
+# This builds the amd64 image with Nix and pushes it to GHCR under the tags the
+# ref maps to (see scripts/image-tags.sh). The deploy repo pins the exact tag
+# and Renovate bumps it.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # Both skopeo invocations (login + the publish app's copy) share one authfile.
+  REGISTRY_AUTH_FILE: ${{ github.workspace }}/auth.json
+
+jobs:
+  image:
+    name: build and push image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0 # full history so the flake can stamp VCS info
+
+      - uses: DeterminateSystems/nix-installer-action@v22
+
+      # amd64-only: no multi-arch manifest (arm64 is local-only).
+      - name: Build the amd64 image
+        run: nix build .#packages.x86_64-linux.image
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | nix run nixpkgs#skopeo -- login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Publish
+        run: nix run .#publish -- "${{ github.ref }}"

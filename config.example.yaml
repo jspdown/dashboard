@@ -1,0 +1,23 @@
+# Repos to poll, the review policy, and freshness windows.
+# Referenced by `dashboard serve --config` (mounted into the api
+# container at /etc/dashboard/config.yaml by the example compose).
+
+repos:                                  # each repo polls on its own ticker
+  - { repo: owner/repo,       interval: 2m }
+  - { repo: owner/other-repo, interval: 10m }
+
+review:
+  defaultRequiredReviewers: 2           # reviewers a PR needs before it leaves "Needs my review"
+
+  ignoreLabels:                         # PRs carrying any of these never enter "Needs my review"
+    - area/docs
+
+  reviewerOverrides:                    # per-label overrides; first match wins
+    - { label: light-review, reviewers: 1 }
+
+  botAuthors:                           # PRs from these accounts group separately
+    - renovate[bot]
+
+freshness:
+  staleAfterDays: 5                     # PR age that triggers the "stale" badge and chip filter
+  recentlyMergedDays: 7                 # how far back the "Recently merged" group looks

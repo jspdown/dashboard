@@ -1,0 +1,149 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: all
+  disable:
+    # Obnoxious linters that cost more than they pay off.
+    - cyclop
+    - dupl
+    - exhaustruct
+    - forcetypeassert
+    - funlen
+    - gochecknoglobals
+    - gochecknoinits
+    - gocognit
+    - gocyclo
+    - godox
+    - mnd
+    - nlreturn
+    - noinlineerr
+    - paralleltest
+    - testpackage
+    - wsl
+    - wsl_v5
+
+    # Deprecated: replaced by gomodguard_v2; surfaces a warning.
+    - gomodguard
+
+    # Other linters too opinionated to be worth the noise here.
+    - embeddedstructfieldcheck # Strict empty-line rule around embedded fields.
+    - err113                   # Forces sentinel errors for one-shot validation messages.
+    - ireturn                  # Returning interfaces is fine when the caller needs the abstraction.
+    - nonamedreturns           # Named returns are useful for documentation in some signatures.
+    - tagliatelle              # snake_case JSON tags match the SQL schema and are intentional.
+    - varnamelen               # Short names for short scopes are idiomatic Go.
+    - wrapcheck                # Forwarding errors from the same package or stdlib does not need wrapping.
+
+  settings:
+    depguard:
+      # Mirrors the "approved deps" list in CLAUDE.md. Anything that is
+      # not stdlib, our own module, or one of these will fail the lint.
+      rules:
+        main:
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/jspdown/dashboard
+            - github.com/go-chi/chi/v5
+            - github.com/golang-migrate/migrate/v4
+            - github.com/google/go-github/v85
+            - github.com/jackc/pgx-zerolog
+            - github.com/jackc/pgx/v5
+            - github.com/mattn/go-isatty
+            - github.com/rs/zerolog
+            - github.com/stretchr/testify
+            - github.com/urfave/cli/v3
+            - gopkg.in/yaml.v3
+    errcheck:
+      check-type-assertions: true
+    goconst:
+      min-occurrences: 4
+      ignore-tests: true
+    gosec:
+      excludes:
+        # G104 (errors unhandled) overlaps with errcheck.
+        - G104
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    lll:
+      line-length: 160
+      tab-width: 4
+    nakedret:
+      max-func-lines: 0
+    revive:
+      enable-all-rules: false
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: empty-block
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: exported
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: unused-parameter
+        - name: var-declaration
+        - name: var-naming
+    staticcheck:
+      checks:
+        - all
+    testifylint:
+      enable-all: true
+
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - bodyclose
+          - errcheck
+          - gosec
+          - noctx
+      - path: cmd/dashboard/main\.go
+        linters:
+          - revive
+      # Sample data shared with tests; constant-extracting it adds noise
+      # without clarifying anything.
+      - path: pkg/pullrequest/fixtures\.go
+        linters:
+          - goconst
+      # The PullRequest* type names are intentional; the package would
+      # otherwise be ambiguous when domain types live next to view types.
+      - path: pkg/pullrequest/(domain|pullrequest)\.go
+        text: "^exported: type name will be used as pullrequest\\.PullRequest"
+        linters:
+          - revive
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - goimports
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/jspdown/dashboard)

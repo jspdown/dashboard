@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: DeterminateSystems/nix-installer-action@v22
+
+      # Nix store cache in GitHub's cache, restored by prefix and purged to stay under the 10 GB cap.
+      - uses: nix-community/cache-nix-action@v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 5G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
+      - run: make check
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - run: make test-e2e
+
+  # Single required status check: fails unless every job succeeded.
+  gate:
+    name: ci
+    needs: [check, e2e]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Verify all CI jobs succeeded
+        run: |
+          echo "check result: ${{ needs.check.result }}"
+          echo "e2e result:   ${{ needs.e2e.result }}"
+          if [ "${{ needs.check.result }}" != "success" ] || [ "${{ needs.e2e.result }}" != "success" ]; then
+            echo "One or more CI jobs failed, were skipped, or were cancelled." >&2
+            exit 1
+          fi
+          echo "All CI jobs passed."

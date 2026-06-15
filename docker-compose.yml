@@ -1,0 +1,93 @@
+# Example stack: Postgres + the dashboard API behind oauth2-proxy.
+#
+# This mirrors the production topology (a trusted-header proxy in front
+# of the API) trimmed to the essentials so it runs locally. It pulls a
+# pinned, published image, so no Nix and no local build are required.
+# Before `docker compose up`:
+#
+#   1. Register a GitHub OAuth app with the callback URL
+#      http://localhost:4180/oauth2/callback
+#   2. Edit config.example.yaml to list the repos you want to poll.
+#   3. Provide the secrets below, by exporting them or putting them in a
+#      local .env file next to this compose file:
+#        DASHBOARD_GITHUB_TOKEN       a PAT with `repo` scope
+#        OAUTH2_PROXY_CLIENT_ID       the OAuth app client id
+#        OAUTH2_PROXY_CLIENT_SECRET   the OAuth app client secret
+#        OAUTH2_PROXY_COOKIE_SECRET   `openssl rand -hex 16`
+#
+# Then open http://localhost:4180
+#
+# No-auth shortcut for hacking on the UI: `make dev-e2e` runs the API
+# pre-seeded with demo data and stamps the user header for you, so you
+# can skip oauth2-proxy and the OAuth app entirely.
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: dashboard
+      POSTGRES_PASSWORD: dashboard
+      POSTGRES_DB: dashboard
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dashboard"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    # A pinned, published image so non-Nix users can run the example stack with
+    # nothing but Docker. Renovate bumps this tag. To test a locally built
+    # image instead, point the override at it:
+    #   make image
+    #   DASHBOARD_IMAGE=dashboard:<tag> docker compose up
+    image: ${DASHBOARD_IMAGE:-ghcr.io/jspdown/dashboard:v0.1.0}
+    expose:
+      - "8080"
+    environment:
+      DASHBOARD_API_ADDR: ":8080"
+      DASHBOARD_API_LOG_LEVEL: "info"
+      # DASHBOARD_WEB_DIR is baked into the image (it points at the Nix-built
+      # bundle); do not override it here or static serving breaks.
+      DASHBOARD_CONFIG: "/etc/dashboard/config.yaml"
+      DASHBOARD_DATABASE_URL: "postgres://dashboard:dashboard@postgres:5432/dashboard?sslmode=disable"
+      DASHBOARD_GITHUB_TOKEN: "${DASHBOARD_GITHUB_TOKEN:?set a PAT with repo scope}"
+    volumes:
+      - ./config.example.yaml:/etc/dashboard/config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # oauth2-proxy runs the GitHub OAuth login flow and reverse-proxies
+  # everything else to the api, stamping X-Forwarded-User on the way.
+  # The api's TrustedHeader middleware reads that header. Add
+  # `--github-org=<org>` and `--scope=read:org` to gate access to org
+  # members only.
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.13.0
+    ports:
+      - "4180:4180"
+    environment:
+      OAUTH2_PROXY_CLIENT_ID: "${OAUTH2_PROXY_CLIENT_ID:?register a GitHub OAuth app}"
+      OAUTH2_PROXY_CLIENT_SECRET: "${OAUTH2_PROXY_CLIENT_SECRET:?from the OAuth app}"
+      OAUTH2_PROXY_COOKIE_SECRET: "${OAUTH2_PROXY_COOKIE_SECRET:?generate with openssl rand -hex 16}"
+    command:
+      - --provider=github
+      - --redirect-url=http://localhost:4180/oauth2/callback
+      - --email-domain=*
+      - --reverse-proxy=true
+      - --pass-user-headers=true
+      - --skip-provider-button=true
+      - --http-address=0.0.0.0:4180
+      - --api-route=^/api
+      - --upstream=http://api:8080
+      - --cookie-secure=false
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

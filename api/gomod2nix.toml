@@ -1,0 +1,141 @@
+schema = 3
+cachePackages = [
+  'github.com/davecgh/go-spew/spew',
+  'github.com/go-chi/chi/v5',
+  'github.com/go-chi/chi/v5/middleware',
+  'github.com/golang-migrate/migrate/v4',
+  'github.com/golang-migrate/migrate/v4/database',
+  'github.com/golang-migrate/migrate/v4/database/multistmt',
+  'github.com/golang-migrate/migrate/v4/database/pgx/v5',
+  'github.com/golang-migrate/migrate/v4/source',
+  'github.com/golang-migrate/migrate/v4/source/iofs',
+  'github.com/google/go-github/v85/github',
+  'github.com/google/go-querystring/query',
+  'github.com/jackc/pgerrcode',
+  'github.com/jackc/pgpassfile',
+  'github.com/jackc/pgservicefile',
+  'github.com/jackc/pgx-zerolog',
+  'github.com/jackc/pgx/v5',
+  'github.com/jackc/pgx/v5/pgconn',
+  'github.com/jackc/pgx/v5/pgconn/ctxwatch',
+  'github.com/jackc/pgx/v5/pgproto3',
+  'github.com/jackc/pgx/v5/pgtype',
+  'github.com/jackc/pgx/v5/pgxpool',
+  'github.com/jackc/pgx/v5/stdlib',
+  'github.com/jackc/pgx/v5/tracelog',
+  'github.com/jackc/puddle/v2',
+  'github.com/mattn/go-colorable',
+  'github.com/mattn/go-isatty',
+  'github.com/pmezard/go-difflib/difflib',
+  'github.com/rs/zerolog',
+  'github.com/rs/zerolog/log',
+  'github.com/stretchr/testify/assert',
+  'github.com/stretchr/testify/assert/yaml',
+  'github.com/stretchr/testify/require',
+  'github.com/urfave/cli/v3',
+  'golang.org/x/sync/semaphore',
+  'golang.org/x/sys/unix',
+  'golang.org/x/text/cases',
+  'golang.org/x/text/language',
+  'golang.org/x/text/runes',
+  'golang.org/x/text/secure/bidirule',
+  'golang.org/x/text/secure/precis',
+  'golang.org/x/text/transform',
+  'golang.org/x/text/unicode/bidi',
+  'golang.org/x/text/unicode/norm',
+  'golang.org/x/text/width',
+  'gopkg.in/yaml.v3'
+]
+
+[mod]
+  [mod.'github.com/davecgh/go-spew']
+    version = 'v1.1.2-0.20180830191138-d8f796af33cc'
+    hash = 'sha256-fV9oI51xjHdOmEx6+dlq7Ku2Ag+m/bmbzPo6A4Y74qc='
+
+  [mod.'github.com/go-chi/chi/v5']
+    version = 'v5.2.5'
+    hash = 'sha256-Y1+17ky94849aqk3iKf30F1u+G6K3nzZzLOBSeqIUow='
+
+  [mod.'github.com/golang-migrate/migrate/v4']
+    version = 'v4.19.1'
+    hash = 'sha256-J3htVA6mxGWNik3WPWuulnnhcP0vz2n+oQOgAAO0R3U='
+
+  [mod.'github.com/google/go-github/v85']
+    version = 'v85.0.0'
+    hash = 'sha256-BTJVB9OmZ75Q7i+xVlCsyqpG0sGD+tuW3bTa+zH7Ar8='
+
+  [mod.'github.com/google/go-querystring']
+    version = 'v1.2.0'
+    hash = 'sha256-F/Ve4oDaEqho8RryvdGSRR22/DbYHWZQa6M60n6oSYM='
+
+  [mod.'github.com/jackc/pgerrcode']
+    version = 'v0.0.0-20250907135507-afb5586c32a6'
+    hash = 'sha256-ZfjnC6RW48AuQAItdgCb8c1aZULSjDIAf+wilo0Hg7M='
+
+  [mod.'github.com/jackc/pgpassfile']
+    version = 'v1.0.0'
+    hash = 'sha256-H0nFbC34/3pZUFnuiQk9W7yvAMh6qJDrqvHp+akBPLM='
+
+  [mod.'github.com/jackc/pgservicefile']
+    version = 'v0.0.0-20240606120523-5a60cdf6a761'
+    hash = 'sha256-ETpGsLAA2wcm5xJBayr/mZrCE1YsWbnkbSSX3ptrFn0='
+
+  [mod.'github.com/jackc/pgx-zerolog']
+    version = 'v0.0.0-20230315001418-f978528409eb'
+    hash = 'sha256-IpiA5kfxLXzmyHF+FJ1Yf6cH0KCHMk6Rm9AqBSfQP7s='
+
+  [mod.'github.com/jackc/pgx/v5']
+    version = 'v5.9.2'
+    hash = 'sha256-+R23f/i6n/iUkwc33WadubkUNIslDQraeLWdFdOXGD8='
+
+  [mod.'github.com/jackc/puddle/v2']
+    version = 'v2.2.2'
+    hash = 'sha256-IUxdu4JYfsCh/qlz2SiUWu7EVPHhyooiVA4oaS2Z6yk='
+
+  [mod.'github.com/kr/pretty']
+    version = 'v0.3.1'
+    hash = 'sha256-DlER7XM+xiaLjvebcIPiB12oVNjyZHuJHoRGITzzpKU='
+
+  [mod.'github.com/mattn/go-colorable']
+    version = 'v0.1.14'
+    hash = 'sha256-JC60PjKj7MvhZmUHTZ9p372FV72I9Mxvli3fivTbxuA='
+
+  [mod.'github.com/mattn/go-isatty']
+    version = 'v0.0.22'
+    hash = 'sha256-6O/0jc33pKUzlzUGpH8Ekk54XgJvx6Qe7kJtbcNJAV4='
+
+  [mod.'github.com/pmezard/go-difflib']
+    version = 'v1.0.1-0.20181226105442-5d4384ee4fb2'
+    hash = 'sha256-XA4Oj1gdmdV/F/+8kMI+DBxKPthZ768hbKsO3d9Gx90='
+
+  [mod.'github.com/rogpeppe/go-internal']
+    version = 'v1.14.1'
+    hash = 'sha256-6NzhXCCD1Qhj05WHbCDxH5hwfNM6psoAk7uIxm7N55E='
+
+  [mod.'github.com/rs/zerolog']
+    version = 'v1.35.1'
+    hash = 'sha256-JMry/37tnOV0ZUCeWRsduxb3WehvbLxUUZfF2l+Cz/s='
+
+  [mod.'github.com/stretchr/testify']
+    version = 'v1.11.1'
+    hash = 'sha256-sWfjkuKJyDllDEtnM8sb/pdLzPQmUYWYtmeWz/5suUc='
+
+  [mod.'github.com/urfave/cli/v3']
+    version = 'v3.8.0'
+    hash = 'sha256-mLBHZBcxBiuBcQg2A2nYHMrr8muLBuIQMAIZh6ZuJfw='
+
+  [mod.'golang.org/x/sync']
+    version = 'v0.19.0'
+    hash = 'sha256-RbRZ+sKZUurOczGhhzOoY/sojTlta3H9XjL4PXX/cno='
+
+  [mod.'golang.org/x/sys']
+    version = 'v0.42.0'
+    hash = 'sha256-LhNedvUEJbPYyR6EoU91rfOr3DBBoauLOcMcyqghEos='
+
+  [mod.'golang.org/x/text']
+    version = 'v0.34.0'
+    hash = 'sha256-wGKd1JkeiFROibvo2kkAuQ7JajSIfV4utGaoGbTQhQM='
+
+  [mod.'gopkg.in/yaml.v3']
+    version = 'v3.0.1'
+    hash = 'sha256-FqL9TKYJ0XkNwJFnq9j0VvJ5ZUU1RvH/52h/f5bkYAU='

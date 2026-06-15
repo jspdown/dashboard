@@ -1,0 +1,49 @@
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 14px;
+  height: 44px;
+  border-bottom: 1px solid var(--border-1);
+  background: var(--bg-1);
+  flex-shrink: 0;
+}
+
+.brand {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-1);
+  letter-spacing: 0;
+}
+
+.brandDot {
+  width: 8px; height: 8px; border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.commit {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-3);
+  letter-spacing: 0;
+  cursor: help;
+}
+
+.user {
+  display: flex;
+  align-items: center;
+  margin-left: 12px;
+}
+
+/* When there is no commit revision rendered, push the user menu to
+   the right edge so the layout doesn't collapse against the brand. */
+.commit + .user {
+  margin-left: 12px;
+}
+
+.brand + .user {
+  margin-left: auto;
+}

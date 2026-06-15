@@ -1,0 +1,127 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: all
+  disable:
+    # Same set we disable in api/, plus a few that don't apply to test
+    # helpers (a chromedp tab needs a context.Context field; sentinel
+    # error variables are common in package-level singletons; etc.).
+    - cyclop
+    - dupl
+    - exhaustruct
+    - forcetypeassert
+    - funlen
+    - gochecknoglobals
+    - gochecknoinits
+    - gocognit
+    - gocyclo
+    - godox
+    - mnd
+    - nlreturn
+    - noinlineerr
+    - paralleltest
+    - testpackage
+    - wsl
+    - wsl_v5
+    - gomodguard
+    - embeddedstructfieldcheck
+    - err113
+    - ireturn
+    - nonamedreturns
+    - tagliatelle
+    - varnamelen
+    - wrapcheck
+    # Test-helper specifics — see comments above for rationale.
+    - containedctx
+    - dogsled
+    - errname
+    - fatcontext
+    - forbidigo
+    - funcorder
+    - goconst
+    - govet
+    - nosprintfhostport
+    - perfsprint
+
+  settings:
+    depguard:
+      rules:
+        main:
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/jspdown/dashboard
+            - github.com/chromedp/cdproto
+            - github.com/chromedp/chromedp
+            - github.com/go-chi/chi/v5
+            - github.com/google/go-github/v85
+            - github.com/jackc/pgx/v5
+            - github.com/rs/zerolog
+            - github.com/stretchr/testify
+            - github.com/testcontainers/testcontainers-go
+            - golang.org/x/oauth2
+    gomoddirectives:
+      # cdproto's main branch has begun requiring Go 1.26 toolchain in
+      # its go.mod, which our pinned golangci-lint can't yet validate
+      # against. We pin to the last 1.25-compatible cdproto until the
+      # lint baseline catches up.
+      replace-allow-list:
+        - github.com/jspdown/dashboard/api
+        - github.com/chromedp/cdproto
+      replace-local: true
+    errcheck:
+      check-type-assertions: true
+    gosec:
+      excludes:
+        - G104
+    lll:
+      line-length: 160
+      tab-width: 4
+    revive:
+      enable-all-rules: false
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: empty-block
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: exported
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: var-declaration
+        - name: var-naming
+    staticcheck:
+      checks:
+        - all
+    testifylint:
+      enable-all: true
+
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - bodyclose
+          - errcheck
+          - gosec
+          - noctx
