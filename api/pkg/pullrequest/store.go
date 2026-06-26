@@ -10,17 +10,15 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/jspdown/dashboard/api/pkg/config"
 	"github.com/jspdown/dashboard/api/pkg/postgres"
 )
 
 type Store struct {
-	pool      *pgxpool.Pool
-	freshness config.FreshnessConfig
+	pool *pgxpool.Pool
 }
 
-func NewStore(pool *pgxpool.Pool, freshness config.FreshnessConfig) *Store {
-	return &Store{pool: pool, freshness: freshness}
+func NewStore(pool *pgxpool.Pool) *Store {
+	return &Store{pool: pool}
 }
 
 type Row struct {
@@ -213,9 +211,11 @@ ON CONFLICT (user_login, pr_github_id) DO UPDATE SET
 }
 
 // ListStaleIngestNumbers returns PR numbers in repo with ingest_version
-// below currentVersion, within the same active window ListSnapshots uses
-// (open, or merged within freshness.recently_merged_days). The poller calls
-// it at startup to backfill rows after an IngestVersion bump.
+// below currentVersion that are still active: open, or merged within
+// MaxRecentlyMergedDays. The window uses the maximum any user can configure so
+// a row stays eligible for backfill regardless of an individual viewer's
+// recently-merged setting. The poller calls it to backfill rows after an
+// IngestVersion bump.
 func (s *Store) ListStaleIngestNumbers(ctx context.Context, repo string, currentVersion int) ([]int, error) {
 	const query = `
 SELECT pr_number FROM pull_requests
@@ -225,7 +225,7 @@ WHERE repo = $1
        OR (status = 'merged' AND merged_at > now() - make_interval(days => $3)))
 ORDER BY pr_number`
 
-	numbers, err := postgres.QueryMany(ctx, s.pool, query, []any{repo, currentVersion, s.freshness.RecentlyMergedDays}, pgx.RowTo[int])
+	numbers, err := postgres.QueryMany(ctx, s.pool, query, []any{repo, currentVersion, MaxRecentlyMergedDays}, pgx.RowTo[int])
 	if err != nil {
 		return nil, fmt.Errorf("listing stale ingest numbers: %w", err)
 	}
@@ -379,15 +379,17 @@ LEFT JOIN LATERAL (
 LEFT JOIN pull_request_views v ON v.pr_github_id = pr.github_id AND v.user_login = $1`
 
 // ListSnapshotsForUser returns one snapshot per active PR (open or merged
-// within freshness.recently_merged_days) in a single atomic query. View
-// state is scoped to userLogin so "unread" is computed against this user's
-// own previous opens. The rules in rules.go then run on the result in Go.
-func (s *Store) ListSnapshotsForUser(ctx context.Context, userLogin string) ([]PullRequestSnapshot, error) {
+// within recentlyMergedDays) in the repos the user observes, in a single atomic
+// query. View state is scoped to userLogin so "unread" is computed against this
+// user's own previous opens. The rules in rules.go then run on the result in Go.
+// An empty repos slice matches nothing.
+func (s *Store) ListSnapshotsForUser(ctx context.Context, userLogin string, repos []string, recentlyMergedDays int) ([]PullRequestSnapshot, error) {
 	const query = snapshotSelect + `
-WHERE pr.status = 'open'
-   OR (pr.status = 'merged' AND pr.merged_at > now() - make_interval(days => $2))`
+WHERE pr.repo = ANY($3)
+  AND (pr.status = 'open'
+       OR (pr.status = 'merged' AND pr.merged_at > now() - make_interval(days => $2)))`
 
-	rows, err := postgres.QueryMany(ctx, s.pool, query, []any{userLogin, s.freshness.RecentlyMergedDays}, pgx.RowToStructByName[pullRequestSnapshotRow])
+	rows, err := postgres.QueryMany(ctx, s.pool, query, []any{userLogin, recentlyMergedDays, repos}, pgx.RowToStructByName[pullRequestSnapshotRow])
 	if err != nil {
 		return nil, fmt.Errorf("listing pull request snapshots: %w", err)
 	}

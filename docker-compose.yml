@@ -7,15 +7,16 @@
 #
 #   1. Register a GitHub OAuth app with the callback URL
 #      http://localhost:4180/oauth2/callback
-#   2. Edit config.example.yaml to list the repos you want to poll.
-#   3. Provide the secrets below, by exporting them or putting them in a
+#   2. Provide the secrets below, by exporting them or putting them in a
 #      local .env file next to this compose file:
 #        DASHBOARD_GITHUB_TOKEN       a PAT with `repo` scope
 #        OAUTH2_PROXY_CLIENT_ID       the OAuth app client id
 #        OAUTH2_PROXY_CLIENT_SECRET   the OAuth app client secret
 #        OAUTH2_PROXY_COOKIE_SECRET   `openssl rand -hex 16`
 #
-# Then open http://localhost:4180
+# Then open http://localhost:4180 and add the repos you want to observe
+# from the in-app Settings -> Repositories screen (repos and review rules
+# are per-user now, stored in the database).
 #
 # No-auth shortcut for hacking on the UI: `make dev-e2e` runs the API
 # pre-seeded with demo data and stamps the user header for you, so you
@@ -51,11 +52,8 @@ services:
       DASHBOARD_API_LOG_LEVEL: "info"
       # DASHBOARD_WEB_DIR is baked into the image (it points at the Nix-built
       # bundle); do not override it here or static serving breaks.
-      DASHBOARD_CONFIG: "/etc/dashboard/config.yaml"
       DASHBOARD_DATABASE_URL: "postgres://dashboard:dashboard@postgres:5432/dashboard?sslmode=disable"
       DASHBOARD_GITHUB_TOKEN: "${DASHBOARD_GITHUB_TOKEN:?set a PAT with repo scope}"
-    volumes:
-      - ./config.example.yaml:/etc/dashboard/config.yaml:ro
     depends_on:
       postgres:
         condition: service_healthy

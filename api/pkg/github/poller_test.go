@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -157,6 +158,131 @@ func TestPoller_listPullRequests_StopsAcrossPages(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 2, "stops once a PR older than cursor is seen on page 2")
 	assert.Equal(t, page1[0].UpdatedAt.Time, newest)
+}
+
+func TestPoller_Nudge_CoalescesAndNeverBlocks(t *testing.T) {
+	p := &Poller{nudge: make(chan struct{}, 1)}
+
+	// Three nudges with no reconcile draining them. None may block; they
+	// coalesce into a single pending signal.
+	p.Nudge()
+	p.Nudge()
+	p.Nudge()
+
+	select {
+	case <-p.nudge:
+	default:
+		t.Fatal("expected one pending nudge after Nudge()")
+	}
+	select {
+	case <-p.nudge:
+		t.Fatal("nudges must coalesce into a single pending signal")
+	default:
+	}
+}
+
+// fakeRepoSource is a mutable, concurrency-safe DistinctRepos source so a test
+// can change the observed set while the reconcile loop runs.
+type fakeRepoSource struct {
+	mu    sync.Mutex
+	repos []string
+}
+
+func (f *fakeRepoSource) DistinctRepos(context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.repos...), nil
+}
+
+func (f *fakeRepoSource) set(repos []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.repos = repos
+}
+
+// countingCursorStore records one tick per repo via RecordPoll, which pollRepo
+// fires on every poll attempt (success or failure). It lets the reconcile test
+// observe which repos are actively polling without a real Postgres.
+type countingCursorStore struct {
+	mu    sync.Mutex
+	polls map[string]int
+}
+
+func (c *countingCursorStore) LoadCursor(context.Context, string) (time.Time, error) {
+	return time.Time{}, nil
+}
+func (c *countingCursorStore) SaveCursor(context.Context, string, time.Time) error { return nil }
+func (c *countingCursorStore) RecordPoll(_ context.Context, repo string, _ *string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.polls[repo]++
+	return nil
+}
+func (c *countingCursorStore) count(repo string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.polls[repo]
+}
+
+type noopApplier struct{}
+
+func (noopApplier) Apply(context.Context, any) error { return nil }
+
+// TestPoller_Run_ReconcilesRepoSet drives the reconcile loop: a repo starts
+// polling when observed, a newly-added repo starts on a Nudge, and a removed
+// repo's ticker stops. The fake GitHub server 404s every request, so pollRepo
+// fails fast at the list call but still records the attempt, which is all the
+// test needs to see a repo's ticker firing.
+func TestPoller_Run_ReconcilesRepoSet(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	src := &fakeRepoSource{repos: []string{"acme/widget"}}
+	cur := &countingCursorStore{polls: map[string]int{}}
+
+	p := &Poller{
+		client:   newTestClient(t, server),
+		ingester: noopApplier{},
+		repos:    src,
+		cursors:  cur,
+		interval: 20 * time.Millisecond,
+		nudge:    make(chan struct{}, 1),
+		logger:   zerolog.Nop(),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { p.Run(ctx); close(done) }()
+
+	require.Eventually(t, func() bool { return cur.count("acme/widget") >= 2 },
+		2*time.Second, 10*time.Millisecond, "observed repo must start polling")
+
+	// Add a repo and nudge: it must start without waiting a full reconcile tick.
+	src.set([]string{"acme/widget", "acme/gadget"})
+	p.Nudge()
+	require.Eventually(t, func() bool { return cur.count("acme/gadget") >= 2 },
+		2*time.Second, 10*time.Millisecond, "added repo must start polling after a nudge")
+
+	// Remove widget and nudge. recordPoll is skipped once its context is
+	// cancelled, so the count freezes the moment its ticker stops.
+	src.set([]string{"acme/gadget"})
+	p.Nudge()
+	time.Sleep(150 * time.Millisecond) // let the cancel land and any in-flight poll settle
+	frozen := cur.count("acme/widget")
+	gadgetBefore := cur.count("acme/gadget")
+	time.Sleep(150 * time.Millisecond)
+	assert.Equal(t, frozen, cur.count("acme/widget"), "removed repo must stop polling")
+	assert.Greater(t, cur.count("acme/gadget"), gadgetBefore, "remaining repo keeps polling")
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after context cancel")
+	}
 }
 
 func TestRepoFromSlug(t *testing.T) {

@@ -9,43 +9,73 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v85/github"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 
-	"github.com/jspdown/dashboard/api/pkg/config"
-	"github.com/jspdown/dashboard/api/pkg/postgres"
 	"github.com/jspdown/dashboard/api/pkg/pullrequest"
 )
 
-// RepoConfig is the per-repo polling cadence. It lives in pkg/config (to keep
-// that package leaf-level) and is aliased here so callers importing
-// pkg/github.RepoConfig still work.
-type RepoConfig = config.RepoConfig
+// RepoConfig is a repo slug paired with its poll cadence.
+type RepoConfig struct {
+	Repo     string
+	Interval time.Duration
+}
 
 // applier matches *Ingester so tests can stub it without a postgres pool.
 type applier interface {
 	Apply(ctx context.Context, event any) error
 }
 
+// repoSource yields the set of repos the poller should service: the union of
+// every user's subscriptions.
+type repoSource interface {
+	DistinctRepos(ctx context.Context) ([]string, error)
+}
+
+// cursorStore persists per-repo sync cursors and poll health. The poller routes
+// every repo_sync_cursors write through it so the store owns all Postgres
+// access. *pullrequest.UserStore satisfies it.
+type cursorStore interface {
+	LoadCursor(ctx context.Context, repo string) (time.Time, error)
+	SaveCursor(ctx context.Context, repo string, ts time.Time) error
+	RecordPoll(ctx context.Context, repo string, lastError *string) error
+}
+
 // Poller pulls PR state from GitHub on a per-repo schedule and feeds it through
-// Ingester, reusing the same write path the old webhook handler used.
+// Ingester. The repo set is dynamic: it reconciles against the union of users'
+// subscriptions, starting a ticker for newly-observed repos and stopping it for
+// repos no longer observed by anyone.
 type Poller struct {
-	pool     *pgxpool.Pool
 	client   *gh.Client
 	ingester applier
 	prs      staleSource
-	repos    []RepoConfig
+	repos    repoSource
+	cursors  cursorStore
+	interval time.Duration
 	logger   zerolog.Logger
+
+	// nudge requests an out-of-band reconcile so a just-added repo starts
+	// polling without waiting for the next reconcile tick. Buffered so Nudge
+	// never blocks; a pending nudge coalesces with the next reconcile.
+	nudge chan struct{}
 }
 
-func NewPoller(pool *pgxpool.Pool, client *gh.Client, ingester *Ingester, prs *pullrequest.Store, repos []RepoConfig, logger zerolog.Logger) *Poller {
+func NewPoller(
+	client *gh.Client,
+	ingester *Ingester,
+	prs *pullrequest.Store,
+	repos repoSource,
+	cursors cursorStore,
+	interval time.Duration,
+	logger zerolog.Logger,
+) *Poller {
 	return &Poller{
-		pool:     pool,
 		client:   client,
 		ingester: ingester,
 		prs:      prs,
 		repos:    repos,
+		cursors:  cursors,
+		interval: interval,
+		nudge:    make(chan struct{}, 1),
 		logger:   logger.With().Str("component", "github_poller").Logger(),
 	}
 }
@@ -54,36 +84,101 @@ func NewPoller(pool *pgxpool.Pool, client *gh.Client, ingester *Ingester, prs *p
 // token is still being honored.
 const authCheckInterval = 5 * time.Minute
 
-// Run spawns one goroutine per repo plus an auth health watcher, and blocks
-// until ctx is done.
+// reconcileInterval is how often Run re-reads the observed-repo union to start or
+// stop per-repo pollers. A Nudge triggers one immediately between ticks.
+const reconcileInterval = 30 * time.Second
+
+// Run starts the auth health watcher and a reconcile loop that keeps one
+// per-repo poller alive for each observed repo, blocking until ctx is done. The
+// per-repo isolation (one ticker each) is preserved: a slow repo can't block a
+// fast one.
 func (p *Poller) Run(ctx context.Context) {
-	p.logger.Info().Int("repos", len(p.repos)).Msg("Poller starting")
+	p.logger.Info().Dur("interval", p.interval).Msg("Poller starting")
 
-	var wg sync.WaitGroup
+	var watch sync.WaitGroup
+	watch.Go(func() { p.watchAuth(ctx) })
 
-	wg.Go(func() {
-		p.watchAuth(ctx)
-	})
+	var repoWG sync.WaitGroup
+	active := make(map[string]context.CancelFunc)
 
-	for _, r := range p.repos {
-		wg.Go(func() {
-			p.runRepo(ctx, r)
-		})
+	reconcile := func() {
+		repos, err := p.repos.DistinctRepos(ctx)
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				p.logger.Warn().Err(err).Msg("Reconcile failed, keeping current repo set")
+			}
+			return
+		}
+
+		desired := make(map[string]struct{}, len(repos))
+		for _, repo := range repos {
+			desired[repo] = struct{}{}
+			if _, running := active[repo]; running {
+				continue
+			}
+
+			rctx, cancel := context.WithCancel(ctx) //nolint:gosec // cancel is stored in active and invoked when the repo is dropped or on shutdown.
+			active[repo] = cancel
+
+			repoWG.Go(func() {
+				p.runRepo(rctx, RepoConfig{Repo: repo, Interval: p.interval})
+			})
+
+			p.logger.Info().Str("repo", repo).Msg("Observing repo")
+		}
+
+		for repo, cancel := range active {
+			if _, want := desired[repo]; !want {
+				cancel()
+				delete(active, repo)
+
+				p.logger.Info().Str("repo", repo).Msg("Stopped observing repo")
+			}
+		}
 	}
-	wg.Wait()
-	p.logger.Info().Msg("Poller stopped")
+
+	reconcile()
+
+	t := time.NewTicker(reconcileInterval)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			for _, cancel := range active {
+				cancel()
+			}
+
+			repoWG.Wait()
+			watch.Wait()
+
+			p.logger.Info().Msg("Poller stopped")
+
+			return
+		case <-t.C:
+			reconcile()
+		case <-p.nudge:
+			reconcile()
+		}
+	}
+}
+
+// Nudge asks the reconcile loop to re-read the observed-repo union now. Safe to
+// call from any goroutine and never blocks; if a reconcile is already pending
+// the nudge is dropped (the pending one will pick up the change).
+func (p *Poller) Nudge() {
+	select {
+	case p.nudge <- struct{}{}:
+	default:
+	}
 }
 
 // RunOnce runs a single poll tick for the named repo and returns its error.
-// Behaves identically to a tick fired by Run. Handy for tests that want a
-// deterministic poll without the ticker loop, or an on-demand repo refresh.
+// Behaves identically to a tick fired by Run, but doesn't require the repo to be
+// in the active set: the e2e harness and the on-demand refresh endpoint drive a
+// specific repo directly.
 func (p *Poller) RunOnce(ctx context.Context, repoSlug string) error {
-	for _, r := range p.repos {
-		if r.Repo == repoSlug {
-			return p.pollRepo(ctx, r)
-		}
-	}
-	return fmt.Errorf("repo %q is not in the poller's configured repos", repoSlug)
+	return p.pollRepo(ctx, RepoConfig{Repo: repoSlug, Interval: p.interval})
 }
 
 func (p *Poller) runRepo(ctx context.Context, r RepoConfig) {
@@ -201,15 +296,20 @@ func logAPIError(logger zerolog.Logger, err error, baseMsg string) {
 // pollRepo runs a single tick for a repo: list updated PRs since the cursor,
 // fan out to reviews and check runs, write through the ingester, advance the
 // cursor.
-func (p *Poller) pollRepo(ctx context.Context, r RepoConfig) error {
+func (p *Poller) pollRepo(ctx context.Context, r RepoConfig) (err error) {
+	// Record the poll attempt and its outcome so the Repositories settings
+	// screen can show per-repo health and a fresh "last sync" even when the
+	// cursor doesn't advance (a tick with no new PRs).
+	defer func() { p.recordPoll(ctx, r.Repo, err) }()
+
 	owner, name, ok := strings.Cut(r.Repo, "/")
 	if !ok {
 		return fmt.Errorf("invalid repo %q, expected owner/name", r.Repo)
 	}
 
-	cursor, err := p.loadCursor(ctx, r.Repo)
+	cursor, err := p.cursors.LoadCursor(ctx, r.Repo)
 	if err != nil {
-		return fmt.Errorf("loading cursor: %w", err)
+		return err
 	}
 
 	// On first run, restrict to open PRs to bound the backfill. Once we have a
@@ -240,8 +340,8 @@ func (p *Poller) pollRepo(ctx context.Context, r RepoConfig) error {
 	// failed PR would skip it forever: the next poll asks for "anything updated
 	// since the cursor", and the failed PR is no longer in that window.
 	if applied == len(prs) && !newestSeen.IsZero() {
-		if err := p.saveCursor(ctx, r.Repo, newestSeen); err != nil {
-			return fmt.Errorf("saving cursor: %w", err)
+		if err := p.cursors.SaveCursor(ctx, r.Repo, newestSeen); err != nil {
+			return err
 		}
 	}
 
@@ -388,29 +488,21 @@ func (p *Poller) applyCheckRuns(ctx context.Context, owner, name string, repo *g
 	}
 }
 
-func (p *Poller) loadCursor(ctx context.Context, repo string) (time.Time, error) {
-	var ts *time.Time
-	err := postgres.QueryRow(ctx, p.pool,
-		`SELECT last_synced_at FROM repo_sync_cursors WHERE repo = $1`,
-		[]any{repo}).Scan(&ts)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return time.Time{}, nil
+// recordPoll persists the poll outcome on the repo's cursor row via the store.
+// Best effort: a write failure is logged, never propagated, and a canceled
+// context skips the write entirely. A nil pollErr clears a prior error.
+func (p *Poller) recordPoll(ctx context.Context, repo string, pollErr error) {
+	if p.cursors == nil || ctx.Err() != nil {
+		return
 	}
-	if err != nil {
-		return time.Time{}, err
+	var errText *string
+	if pollErr != nil && !errors.Is(pollErr, context.Canceled) {
+		s := pollErr.Error()
+		errText = &s
 	}
-	if ts == nil {
-		return time.Time{}, nil
+	if err := p.cursors.RecordPoll(ctx, repo, errText); err != nil {
+		p.logger.Warn().Err(err).Str("repo", repo).Msg("Recording poll status failed")
 	}
-	return *ts, nil
-}
-
-func (p *Poller) saveCursor(ctx context.Context, repo string, ts time.Time) error {
-	_, err := postgres.Exec(ctx, p.pool, `
-INSERT INTO repo_sync_cursors (repo, last_synced_at) VALUES ($1, $2)
-ON CONFLICT (repo) DO UPDATE SET last_synced_at = EXCLUDED.last_synced_at`,
-		[]any{repo, ts})
-	return err
 }
 
 // repoFromSlug builds a *gh.Repository with the bits the ingester reads. We

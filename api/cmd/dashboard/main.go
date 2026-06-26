@@ -6,19 +6,23 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/urfave/cli/v3"
 
 	"github.com/jspdown/dashboard/api/migrations"
-	"github.com/jspdown/dashboard/api/pkg/config"
 	"github.com/jspdown/dashboard/api/pkg/dashboard"
 	gh "github.com/jspdown/dashboard/api/pkg/github"
 	"github.com/jspdown/dashboard/api/pkg/httpserver"
 	"github.com/jspdown/dashboard/api/pkg/logging"
 	"github.com/jspdown/dashboard/api/pkg/postgres"
 )
+
+// minPollInterval is the lowest per-repo poll cadence we accept, to keep the
+// poller from burning through GitHub's rate limit.
+const minPollInterval = time.Minute
 
 func main() {
 	os.Exit(run())
@@ -57,11 +61,11 @@ func run() int {
 						Sources:  cli.EnvVars("DASHBOARD_GITHUB_TOKEN"),
 						Required: true,
 					},
-					&cli.StringFlag{
-						Name:     "config",
-						Usage:    "path to the YAML configuration file",
-						Sources:  cli.EnvVars("DASHBOARD_CONFIG"),
-						Required: true,
+					&cli.DurationFlag{
+						Name:    "poll-interval",
+						Value:   minPollInterval,
+						Usage:   "default per-repo poll cadence",
+						Sources: cli.EnvVars("DASHBOARD_POLL_INTERVAL"),
 					},
 					&cli.StringFlag{
 						Name:    "web-dir",
@@ -90,32 +94,31 @@ func run() int {
 // Config holds the serve command's runtime settings, sourced from CLI
 // flags and their backing environment variables.
 type Config struct {
-	Addr        string
-	LogLevel    string
-	DatabaseURL string
-	GitHubToken string
-	ConfigPath  string
-	WebDir      string
+	Addr         string
+	LogLevel     string
+	DatabaseURL  string
+	GitHubToken  string
+	PollInterval time.Duration
+	WebDir       string
 }
 
 // buildConfig collects the serve flag values into a Config.
 func buildConfig(cmd *cli.Command) Config {
 	return Config{
-		Addr:        cmd.String("addr"),
-		LogLevel:    cmd.String("log-level"),
-		DatabaseURL: cmd.String("database-url"),
-		GitHubToken: cmd.String("github-token"),
-		ConfigPath:  cmd.String("config"),
-		WebDir:      cmd.String("web-dir"),
+		Addr:         cmd.String("addr"),
+		LogLevel:     cmd.String("log-level"),
+		DatabaseURL:  cmd.String("database-url"),
+		GitHubToken:  cmd.String("github-token"),
+		PollInterval: cmd.Duration("poll-interval"),
+		WebDir:       cmd.String("web-dir"),
 	}
 }
 
 func serve(ctx context.Context, conf Config) error {
 	logger := logging.New(conf.LogLevel)
 
-	cfg, err := config.Load(conf.ConfigPath)
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+	if conf.PollInterval < minPollInterval {
+		return fmt.Errorf("poll-interval must be at least %s", minPollInterval)
 	}
 
 	connConfig, err := pgx.ParseConfig(conf.DatabaseURL)
@@ -139,17 +142,10 @@ func serve(ctx context.Context, conf Config) error {
 	}
 	logger.Info().Str("login", ghUser.GetLogin()).Msg("GitHub token authenticated")
 
-	accessible, verifyErrs := gh.VerifyRepos(ctx, ghClient, cfg.Repos)
-	for _, e := range verifyErrs {
-		logger.Warn().Err(e).Msg("Repo inaccessible, dropping from poll list")
-	}
-	logger.Info().Int("repos", len(accessible)).Int("dropped", len(verifyErrs)).Msg("GitHub repos verified")
-
 	app := dashboard.New(dashboard.Deps{
-		Config:       cfg,
+		PollInterval: conf.PollInterval,
 		Pool:         pool,
 		GitHubClient: ghClient,
-		PollRepos:    accessible,
 		Logger:       logger,
 		WebDir:       conf.WebDir,
 	})

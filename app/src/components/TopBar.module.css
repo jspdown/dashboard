@@ -23,8 +23,27 @@
   box-shadow: 0 0 8px var(--accent-glow);
 }
 
+.nav { display: flex; gap: 2px; margin-left: 8px; }
+.navLink {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-2);
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+}
+.navLink:hover { color: var(--fg-0); background: var(--bg-2); }
+.navActive {
+  color: var(--fg-0);
+  background: var(--bg-2);
+  border-color: var(--border-1);
+}
+
+.spacer { flex: 1; }
+
 .commit {
-  margin-left: auto;
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--fg-3);
@@ -36,14 +55,4 @@
   display: flex;
   align-items: center;
   margin-left: 12px;
-}
-
-/* When there is no commit revision rendered, push the user menu to
-   the right edge so the layout doesn't collapse against the brand. */
-.commit + .user {
-  margin-left: 12px;
-}
-
-.brand + .user {
-  margin-left: auto;
 }

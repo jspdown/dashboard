@@ -12,25 +12,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jspdown/dashboard/api/pkg/config"
 )
-
-// testUIConfig is the config the handler advertises in tests. None of
-// the handler tests inspect the values, but the constructor needs one.
-func testUIConfig() UIConfig {
-	return UIConfig{
-		StaleAfterDays:     5,
-		RecentlyMergedDays: 7,
-		Review: UIReviewConfig{
-			DefaultRequiredReviewers: 2,
-			IgnoreLabels:             []string{"area/webui"},
-			ReviewerOverrides: []config.ReviewerOverride{
-				{Label: "bot/light-review", Reviewers: 1},
-			},
-		},
-	}
-}
 
 type fakeService struct {
 	listCalls       []ListOpts
@@ -66,21 +48,8 @@ func newRouter(svc Service) http.Handler {
 
 func newRouterWith(svc Service, poller PollTrigger) http.Handler {
 	r := chi.NewRouter()
-	NewHandler(svc, testUIConfig(), poller, zerolog.Nop()).Routes(r)
+	NewHandler(svc, poller, zerolog.Nop()).Routes(r)
 	return r
-}
-
-func TestHandler_Config(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/config", nil)
-	rec := httptest.NewRecorder()
-	newRouter(&fakeService{}).ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
-
-	var got UIConfig
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
-	assert.Equal(t, testUIConfig(), got)
 }
 
 func TestHandler_Poll(t *testing.T) {

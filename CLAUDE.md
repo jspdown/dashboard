@@ -79,7 +79,7 @@ cd api && go run ./cmd/dashboard serve   # run the api directly
 docker compose up        # example stack (pulls a pinned published image)
 ```
 
-Required inputs for `dashboard serve`: `DASHBOARD_DATABASE_URL`, `DASHBOARD_GITHUB_TOKEN`, and `--config` / `DASHBOARD_CONFIG` pointing at the YAML config file. Authentication is a trusted-header proxy's job; the dashboard reads the signed-in user from `X-Forwarded-User`.
+Required inputs for `dashboard serve`: `DASHBOARD_DATABASE_URL` and `DASHBOARD_GITHUB_TOKEN`. All other server-level settings are optional flags (e.g. `--poll-interval` / `DASHBOARD_POLL_INTERVAL`, default `1m`). Authentication is a trusted-header proxy's job; the dashboard reads the signed-in user from `X-Forwarded-User`.
 
 ## Conventions
 
@@ -100,7 +100,12 @@ Required inputs for `dashboard serve`: `DASHBOARD_DATABASE_URL`, `DASHBOARD_GITH
 
 - The poller runs one ticker per repo so a slow repo cannot block a fast one. Preserve this isolation if you touch `pkg/github/poller.go`.
 - No webhook setup is required by design; everything works with a personal access token (`repo` scope). Don't introduce features that require admin/webhook access on the target repos.
-- All workflow- and team-specific settings (polled repos, review-policy labels, freshness windows) live in the YAML config file loaded via `--config`. Don't hardcode any of those values elsewhere.
+- Repositories and review rules are **per-user**, stored in the database and edited from the in-app Settings screens, not in any config file. Server-level operational settings (the default poll interval) are plain `dashboard serve` flags. The relevant pieces:
+  - `user_repos`, `user_settings`, `user_reviewer_overrides` tables (migration `20260626120000_per_user_settings`).
+  - `pkg/pullrequest/UserStore` persists them; `SettingsHandler` serves `/api/settings/repos`, `/api/settings/rules`, and the per-user `/api/config`.
+  - `PostgresService.List` loads the viewer's observed repos + settings, snapshots only those repos, and applies the viewer's `Rules`. Built-in defaults for a user with no saved row live in `pkg/pullrequest/usersettings.go`.
+  - The poller services the **union** of every user's observed repos (`UserStore.DistinctRepos`), reconciling that set dynamically: a repo keeps polling while anyone observes it and stops once the last subscriber removes it. Preserve the one-ticker-per-repo isolation.
+  - Don't reintroduce a global YAML list of repos or review-policy labels.
 - Authentication is a trusted-header proxy's job. The `TrustedHeader` middleware reads `X-Forwarded-User` and injects `auth.User` into request context. The server PAT (`DASHBOARD_GITHUB_TOKEN`) does all GitHub API work (polling, ingest, on-demand poll) and is never tied to a specific user. Don't reintroduce in-process OAuth handlers, session storage, or org-membership checks in the dashboard itself.
 - The e2e harness simulates the proxy by stamping `X-Forwarded-User` on every request reaching the dashboard handler (see `e2e/internal/e2e/stack.go`'s `injectAuthHeader`). Tests configure the user via `e2e.WithViewer`.
 - `pull_request_views` rows are created lazily by `MarkViewed`, keyed `(user_login, pr_github_id)`. There is no backfill and no per-user baseline; a new user sees every "mine"/"reviewed" PR as unread until they mark them. Don't reintroduce per-user backfills or a global single-row view cache.

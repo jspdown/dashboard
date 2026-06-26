@@ -3,20 +3,19 @@ package pullrequest
 import (
 	"slices"
 	"sort"
-
-	"github.com/jspdown/dashboard/api/pkg/config"
 )
 
-// Rules holds the workflow knobs (from config) for classifying PRs and
-// deciding how many reviewers each needs.
+// Rules holds one user's workflow knobs for classifying PRs and deciding how
+// many reviewers each needs. It's built per request from the viewer's settings.
 type Rules struct {
-	cfg config.ReviewConfig
+	settings UserSettings
 }
 
-// NewRules binds a ReviewConfig to the rules engine. We store it by value
-// since it never changes during the process lifetime.
-func NewRules(cfg config.ReviewConfig) *Rules {
-	return &Rules{cfg: cfg}
+// NewRules binds a user's settings to the rules engine. Rules is cheap to
+// construct, so the service builds a fresh one per request from the viewer's
+// stored (or default) settings.
+func NewRules(settings UserSettings) *Rules {
+	return &Rules{settings: settings}
 }
 
 // RequiredReviewers returns how many distinct reviewers a PR needs before
@@ -24,17 +23,17 @@ func NewRules(cfg config.ReviewConfig) *Rules {
 // entirely. They're separate because "zero required" and "drop it" differ.
 // First matching ReviewerOverride wins; ignore labels beat overrides.
 func (r *Rules) RequiredReviewers(labels []string) (count int, ignored bool) {
-	for _, l := range r.cfg.IgnoreLabels {
+	for _, l := range r.settings.IgnoreLabels {
 		if slices.Contains(labels, l) {
 			return 0, true
 		}
 	}
-	for _, o := range r.cfg.ReviewerOverrides {
+	for _, o := range r.settings.ReviewerOverrides {
 		if slices.Contains(labels, o.Label) {
 			return o.Reviewers, false
 		}
 	}
-	return r.cfg.DefaultRequiredReviewers, false
+	return r.settings.DefaultRequiredReviewers, false
 }
 
 // LatestReviewsByReviewer keeps the most recent review per reviewer. On a
@@ -213,7 +212,7 @@ func (r *Rules) ClassifyGroup(pr PullRequest, viewer string, latest map[string]R
 		}
 	}
 	if len(latest) < required {
-		if slices.Contains(r.cfg.BotAuthors, pr.Author) {
+		if slices.Contains(r.settings.BotAuthors, pr.Author) {
 			return GroupRenovate
 		}
 		return GroupReview

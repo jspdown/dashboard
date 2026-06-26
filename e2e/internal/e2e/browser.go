@@ -71,6 +71,19 @@ func (b *Browser) Goto(path string) {
 	}
 }
 
+// GotoSettings navigates to a settings hash route (e.g. "/settings/repos") and
+// waits for the screen's data to load, signaled by data-settings-ready="true".
+func (b *Browser) GotoSettings(hashPath string) {
+	b.t.Helper()
+	url := b.baseURL + "/#" + hashPath
+	if err := chromedp.Run(b.tabCtx,
+		chromedp.Navigate(url),
+		chromedp.WaitVisible(`[data-settings-ready="true"]`, chromedp.ByQuery),
+	); err != nil {
+		b.dumpForFailure("goto-settings "+url, err)
+	}
+}
+
 // Reload does a full page reload and waits for the SPA to remount and
 // refetch /api/prs. Two races to defeat: Reload + WaitVisible can match
 // the old DOM still attached during unload, so we stamp a nonce and Poll
@@ -183,6 +196,35 @@ func (b *Browser) FilterChips() []string {
 	js := `Array.from(document.querySelectorAll('button.chip')).map(el => el.textContent.trim())`
 	if err := chromedp.Run(b.tabCtx, chromedp.Evaluate(js, &out)); err != nil {
 		b.t.Fatalf("e2e: FilterChips: %v", err)
+	}
+	return out
+}
+
+// SettingsRepoRow is the rendered state of one row on the Repositories settings
+// screen: the health dot's label and the stats cell text.
+type SettingsRepoRow struct {
+	Health string `json:"health"`
+	Stats  string `json:"stats"`
+}
+
+// SettingsRepoRows returns the observed-repo rows on the Repositories settings
+// screen, keyed by slug. Call after GotoSettings("/settings/repos"). Lets tests
+// assert that RepoOverview's health and open/needs counts reach the DOM.
+func (b *Browser) SettingsRepoRows() map[string]SettingsRepoRow {
+	b.t.Helper()
+	out := map[string]SettingsRepoRow{}
+	const js = `(() => {
+		const out = {};
+		document.querySelectorAll('.repo-row').forEach(row => {
+			const slug = row.querySelector('.rr-name .mono')?.textContent.trim() ?? '';
+			const health = row.querySelector('.rr-health .health')?.getAttribute('title') ?? '';
+			const stats = row.querySelector('.rr-stats')?.textContent.trim() ?? '';
+			if (slug) out[slug] = { health, stats };
+		});
+		return out;
+	})()`
+	if err := chromedp.Run(b.tabCtx, chromedp.Evaluate(js, &out)); err != nil {
+		b.t.Fatalf("e2e: SettingsRepoRows: %v", err)
 	}
 	return out
 }
@@ -302,7 +344,7 @@ func (b *Browser) Screenshot(name string) {
 	const style = document.createElement('style');
 	style.id = 'e2e-screenshot-sizing';
 	style.textContent =
-		'html, body, #root, [class*="app"], [class*="main"], [class*="prdash"] {' +
+		'html, body, #root, [class*="app"], [class*="main"], [class*="prdash"], .settings, .set-body {' +
 		'  height: auto !important;' +
 		'  min-height: 0 !important;' +
 		'  max-height: none !important;' +

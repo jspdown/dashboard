@@ -5,18 +5,16 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/jspdown/dashboard/api/pkg/config"
 )
 
 // testRules matches the original Traefik review policy: 2 reviewers by default,
 // area/webui ignored, bot/light-review needs 1, renovate-with-github-actions[bot]
 // the only routed bot author. Used by every rules_test case.
 func testRules() *Rules {
-	return NewRules(config.ReviewConfig{
+	return NewRules(UserSettings{
 		DefaultRequiredReviewers: 2,
 		IgnoreLabels:             []string{"area/webui"},
-		ReviewerOverrides: []config.ReviewerOverride{
+		ReviewerOverrides: []ReviewerOverride{
 			{Label: "bot/light-review", Reviewers: 1},
 		},
 		BotAuthors: []string{"renovate-with-github-actions[bot]"},
@@ -48,18 +46,18 @@ func TestRequiredReviewers(t *testing.T) {
 }
 
 func TestRequiredReviewers_emptyConfig(t *testing.T) {
-	// Bare ReviewConfig: no overrides, no ignore labels, default count is the
-	// zero value. Sanity check that rules don't read state outside the config.
-	r := NewRules(config.ReviewConfig{})
+	// Bare settings: no overrides, no ignore labels, default count is the
+	// zero value. Sanity check that rules don't read state outside the settings.
+	r := NewRules(UserSettings{})
 	count, ignored := r.RequiredReviewers([]string{"area/webui"})
 	assert.Equal(t, 0, count)
 	assert.False(t, ignored)
 }
 
 func TestRequiredReviewers_multipleOverrides(t *testing.T) {
-	r := NewRules(config.ReviewConfig{
+	r := NewRules(UserSettings{
 		DefaultRequiredReviewers: 3,
-		ReviewerOverrides: []config.ReviewerOverride{
+		ReviewerOverrides: []ReviewerOverride{
 			{Label: "tiny", Reviewers: 1},
 			{Label: "small", Reviewers: 2},
 		},
@@ -558,7 +556,7 @@ func TestClassifyGroup(t *testing.T) {
 }
 
 func TestClassifyGroup_multipleBotAuthors(t *testing.T) {
-	r := NewRules(config.ReviewConfig{
+	r := NewRules(UserSettings{
 		DefaultRequiredReviewers: 2,
 		BotAuthors:               []string{"botA[bot]", "botB[bot]"},
 	})

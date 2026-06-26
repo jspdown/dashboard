@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jspdown/dashboard/e2e/internal/e2e"
-	apicfg "github.com/jspdown/dashboard/api/pkg/config"
 )
 
 // Each test calls t.Parallel(); the harness gives every test its own
@@ -17,15 +16,13 @@ import (
 
 // TestIgnoreLabelHidesPRFromReviewQueue exercises the ignore_labels
 // path: a PR carrying area/webui must not appear in "Needs my review",
-// and removing the label re-surfaces it on the next poll. The most
-// fragile invariant of the YAML-config refactor, kept here to catch
-// regressions.
+// and removing the label re-surfaces it on the next poll.
 func TestIgnoreLabelHidesPRFromReviewQueue(t *testing.T) {
 	t.Parallel()
 	h := e2e.Start(t,
 		e2e.WithViewer("alice"),
 		e2e.WithRepo("acme/widget"),
-		e2e.WithReview(apicfg.ReviewConfig{
+		e2e.WithReview(e2e.ReviewConfig{
 			DefaultRequiredReviewers: 2,
 			IgnoreLabels:             []string{"area/webui"},
 		}),
@@ -62,9 +59,9 @@ func TestReviewerOverrideBypassesDefaultCount(t *testing.T) {
 	h := e2e.Start(t,
 		e2e.WithViewer("alice"),
 		e2e.WithRepo("acme/widget"),
-		e2e.WithReview(apicfg.ReviewConfig{
+		e2e.WithReview(e2e.ReviewConfig{
 			DefaultRequiredReviewers: 2,
-			ReviewerOverrides: []apicfg.ReviewerOverride{
+			ReviewerOverrides: []e2e.ReviewerOverride{
 				{Label: "bot/light-review", Reviewers: 1},
 			},
 		}),
@@ -103,7 +100,7 @@ func TestBotAuthorRoutesToRenovateGroup(t *testing.T) {
 	h := e2e.Start(t,
 		e2e.WithViewer("alice"),
 		e2e.WithRepo("acme/widget"),
-		e2e.WithReview(apicfg.ReviewConfig{
+		e2e.WithReview(e2e.ReviewConfig{
 			DefaultRequiredReviewers: 2,
 			BotAuthors:               []string{"renovate-bot[bot]"},
 		}),
@@ -123,6 +120,36 @@ func TestBotAuthorRoutesToRenovateGroup(t *testing.T) {
 		"PRs from regular authors keep going to the review queue")
 }
 
+// TestRepositoriesScreenReflectsPollHealthAndCounts exercises the per-user
+// RepoOverview path end-to-end: after a poll, the Repositories settings screen
+// must show the observed repo as healthy with the viewer's open and
+// needs-review counts, the numbers PostgresService.RepoOverview computes.
+func TestRepositoriesScreenReflectsPollHealthAndCounts(t *testing.T) {
+	t.Parallel()
+	h := e2e.Start(t,
+		e2e.WithViewer("alice"),
+		e2e.WithRepo("acme/widget"),
+		e2e.WithReview(e2e.ReviewConfig{DefaultRequiredReviewers: 2}),
+	)
+
+	// One open PR needing alice's review, one open PR she authored.
+	h.Fake.Repo("acme/widget").
+		PR(11).Title("Needs review").Author("bob").Open()
+	h.Fake.Repo("acme/widget").
+		PR(12).Title("Mine").Author("alice").Open()
+
+	h.Poll("acme/widget")
+
+	h.Browser.GotoSettings("/settings/repos")
+	rows := h.Browser.SettingsRepoRows()
+
+	require.Contains(t, rows, "acme/widget", "observed repo must render a row")
+	row := rows["acme/widget"]
+	assert.Equal(t, "polling", row.Health, "a polled repo with no error reads as healthy")
+	assert.Contains(t, row.Stats, "2 open", "both open PRs are counted")
+	assert.Contains(t, row.Stats, "1 need you", "the un-reviewed PR by another author needs the viewer")
+}
+
 // TestStaleAfterDaysFlowsThroughChip exercises the freshness path: the
 // stale-filter chip text must reflect the configured stale_after_days,
 // and the search placeholder must reflect the configured viewer login.
@@ -132,7 +159,7 @@ func TestStaleAfterDaysFlowsThroughChip(t *testing.T) {
 	h := e2e.Start(t,
 		e2e.WithViewer("priya"),
 		e2e.WithRepo("acme/widget"),
-		e2e.WithFreshness(apicfg.FreshnessConfig{
+		e2e.WithFreshness(e2e.FreshnessConfig{
 			StaleAfterDays:     10,
 			RecentlyMergedDays: 14,
 		}),

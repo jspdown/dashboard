@@ -10,8 +10,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog"
-
-	"github.com/jspdown/dashboard/api/pkg/config"
 )
 
 // PollTrigger is the slice of the GitHub poller the handler needs to drive
@@ -20,50 +18,19 @@ type PollTrigger interface {
 	RunOnce(ctx context.Context, repoSlug string) error
 }
 
-// UIConfig is the slice of runtime config the frontend needs for group
-// descriptions, stale badges, and the search placeholder. Connection-level
-// fields (repos, GitHub token, bot authors) stay server-side; viewer
-// identity comes from /api/auth/status, not here.
-type UIConfig struct {
-	StaleAfterDays     int            `json:"stale_after_days"`
-	RecentlyMergedDays int            `json:"recently_merged_days"`
-	Review             UIReviewConfig `json:"review"`
-}
-
-type UIReviewConfig struct {
-	DefaultRequiredReviewers int                       `json:"default_required_reviewers"`
-	IgnoreLabels             []string                  `json:"ignore_labels"`
-	ReviewerOverrides        []config.ReviewerOverride `json:"reviewer_overrides"`
-}
-
-// UIConfigFrom strips the on-disk config down to what the frontend can see.
-func UIConfigFrom(cfg *config.Config) UIConfig {
-	return UIConfig{
-		StaleAfterDays:     cfg.Freshness.StaleAfterDays,
-		RecentlyMergedDays: cfg.Freshness.RecentlyMergedDays,
-		Review: UIReviewConfig{
-			DefaultRequiredReviewers: cfg.Review.DefaultRequiredReviewers,
-			IgnoreLabels:             append([]string(nil), cfg.Review.IgnoreLabels...),
-			ReviewerOverrides:        append([]config.ReviewerOverride(nil), cfg.Review.ReviewerOverrides...),
-		},
-	}
-}
-
 type Handler struct {
-	svc      Service
-	uiConfig UIConfig
-	poller   PollTrigger
-	logger   zerolog.Logger
+	svc    Service
+	poller PollTrigger
+	logger zerolog.Logger
 }
 
-func NewHandler(svc Service, uiConfig UIConfig, poller PollTrigger, logger zerolog.Logger) *Handler {
-	return &Handler{svc: svc, uiConfig: uiConfig, poller: poller, logger: logger}
+func NewHandler(svc Service, poller PollTrigger, logger zerolog.Logger) *Handler {
+	return &Handler{svc: svc, poller: poller, logger: logger}
 }
 
 func (h *Handler) Routes(r chi.Router) {
 	r.Get("/prs", h.list)
 	r.Post("/prs/{id}/viewed", h.markViewed)
-	r.Get("/config", h.config)
 	r.Post("/poll/{owner}/{repo}", h.poll)
 }
 
@@ -93,10 +60,6 @@ func (h *Handler) markViewed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handler) config(w http.ResponseWriter, _ *http.Request) {
-	h.writeJSON(w, http.StatusOK, h.uiConfig)
 }
 
 // errRepoNotConfigured is the sentinel the poller returns for a repo that
