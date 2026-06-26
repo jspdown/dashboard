@@ -12,11 +12,11 @@ import (
 // screens write in production. It backs the WithRepo/WithReview/WithFreshness
 // test options.
 func seedViewer(ctx context.Context, pool *pgxpool.Pool, o options) error {
-	for _, r := range o.repos {
+	for _, repo := range o.repos {
 		if _, err := pool.Exec(ctx,
 			`INSERT INTO user_repos (user_login, repo) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			o.viewer, r.Repo); err != nil {
-			return fmt.Errorf("seed repo %s: %w", r.Repo, err)
+			o.viewer, repo); err != nil {
+			return fmt.Errorf("seed repo %s: %w", repo, err)
 		}
 	}
 

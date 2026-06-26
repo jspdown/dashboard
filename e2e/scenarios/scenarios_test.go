@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jspdown/dashboard/e2e/internal/e2e"
-	apicfg "github.com/jspdown/dashboard/api/pkg/config"
 )
 
 // Each test calls t.Parallel(); the harness gives every test its own
@@ -25,7 +24,7 @@ func TestIgnoreLabelHidesPRFromReviewQueue(t *testing.T) {
 	h := e2e.Start(t,
 		e2e.WithViewer("alice"),
 		e2e.WithRepo("acme/widget"),
-		e2e.WithReview(apicfg.ReviewConfig{
+		e2e.WithReview(e2e.ReviewConfig{
 			DefaultRequiredReviewers: 2,
 			IgnoreLabels:             []string{"area/webui"},
 		}),
@@ -62,9 +61,9 @@ func TestReviewerOverrideBypassesDefaultCount(t *testing.T) {
 	h := e2e.Start(t,
 		e2e.WithViewer("alice"),
 		e2e.WithRepo("acme/widget"),
-		e2e.WithReview(apicfg.ReviewConfig{
+		e2e.WithReview(e2e.ReviewConfig{
 			DefaultRequiredReviewers: 2,
-			ReviewerOverrides: []apicfg.ReviewerOverride{
+			ReviewerOverrides: []e2e.ReviewerOverride{
 				{Label: "bot/light-review", Reviewers: 1},
 			},
 		}),
@@ -103,7 +102,7 @@ func TestBotAuthorRoutesToRenovateGroup(t *testing.T) {
 	h := e2e.Start(t,
 		e2e.WithViewer("alice"),
 		e2e.WithRepo("acme/widget"),
-		e2e.WithReview(apicfg.ReviewConfig{
+		e2e.WithReview(e2e.ReviewConfig{
 			DefaultRequiredReviewers: 2,
 			BotAuthors:               []string{"renovate-bot[bot]"},
 		}),
@@ -132,7 +131,7 @@ func TestStaleAfterDaysFlowsThroughChip(t *testing.T) {
 	h := e2e.Start(t,
 		e2e.WithViewer("priya"),
 		e2e.WithRepo("acme/widget"),
-		e2e.WithFreshness(apicfg.FreshnessConfig{
+		e2e.WithFreshness(e2e.FreshnessConfig{
 			StaleAfterDays:     10,
 			RecentlyMergedDays: 14,
 		}),

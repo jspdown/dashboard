@@ -41,7 +41,16 @@ poll:
   interval: -1s
 `)
 		_, err := Load(path)
-		assert.ErrorContains(t, err, "poll.interval must be > 0")
+		assert.ErrorContains(t, err, "poll.interval must be at least 1m")
+	})
+
+	t.Run("sub-minute interval is rejected", func(t *testing.T) {
+		path := writeFile(t, `
+poll:
+  interval: 30s
+`)
+		_, err := Load(path)
+		assert.ErrorContains(t, err, "poll.interval must be at least 1m")
 	})
 
 	t.Run("malformed yaml is rejected", func(t *testing.T) {

@@ -1,10 +1,6 @@
-// Package config loads the dashboard's server-level runtime configuration from
-// a single YAML file. Per-user workflow settings (repos, review rules) live in
-// the database, not here.
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -25,44 +21,12 @@ type PollConfig struct {
 	Interval time.Duration `yaml:"interval"`
 }
 
-// The types below are a shared vocabulary for a repo subscription or review
-// policy, used by the e2e harness to seed a viewer's state and by the poller for
-// repo verification. They are not part of the on-disk Config.
-
-// RepoConfig binds a repo slug to its polling cadence.
-type RepoConfig struct {
-	Repo     string        `yaml:"repo"`
-	Interval time.Duration `yaml:"interval"`
-}
-
-// ReviewConfig describes how PRs are routed through a user's review queue.
-type ReviewConfig struct {
-	// DefaultRequiredReviewers defines how many reviewers a PR needs.
-	DefaultRequiredReviewers int `yaml:"defaultRequiredReviewers"`
-	// IgnoreLabels defines the labels that identify PRs we want to ignore.
-	IgnoreLabels []string `yaml:"ignoreLabels"`
-	// ReviewerOverrides defines per-label overrides for the required-reviewer
-	// count. The first matching label wins; unmatched labels fall back to
-	// DefaultRequiredReviewers.
-	ReviewerOverrides []ReviewerOverride `yaml:"reviewerOverrides"`
-	// BotAuthors defines who are the bots.
-	BotAuthors []string `yaml:"botAuthors"`
-}
-
-// ReviewerOverride pairs a PR label with a non-default reviewer count.
-type ReviewerOverride struct {
-	Label     string `json:"label"     yaml:"label"`
-	Reviewers int    `json:"reviewers" yaml:"reviewers"`
-}
-
-// FreshnessConfig defines the criteria of stale PRs.
-type FreshnessConfig struct {
-	StaleAfterDays     int `yaml:"staleAfterDays"`
-	RecentlyMergedDays int `yaml:"recentlyMergedDays"`
-}
-
 // defaultPollInterval is the per-repo poll cadence used when the config omits it.
 const defaultPollInterval = time.Minute
+
+// minPollInterval is the lowest poll cadence we accept, to keep the poller from
+// burning through GitHub's rate limit.
+const minPollInterval = time.Minute
 
 // Load reads, parses, defaults, and validates the YAML config at path.
 func Load(path string) (*Config, error) {
@@ -92,8 +56,8 @@ func (c *Config) applyDefaults() {
 }
 
 func (c *Config) validate() error {
-	if c.Poll.Interval <= 0 {
-		return errors.New("poll.interval must be > 0")
+	if c.Poll.Interval < minPollInterval {
+		return fmt.Errorf("poll.interval must be at least %s", minPollInterval)
 	}
 	return nil
 }

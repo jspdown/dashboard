@@ -12,8 +12,6 @@ package screenshots_test
 import (
 	"testing"
 
-	apicfg "github.com/jspdown/dashboard/api/pkg/config"
-
 	"github.com/jspdown/dashboard/e2e/internal/e2e"
 	"github.com/jspdown/dashboard/e2e/internal/scenarios"
 )
@@ -26,10 +24,10 @@ func demoOpts(viewer string) []e2e.Option {
 	opts := make([]e2e.Option, 0, 2+len(repos))
 	opts = append(opts,
 		e2e.WithViewer(viewer),
-		e2e.WithReview(apicfg.ReviewConfig{
+		e2e.WithReview(e2e.ReviewConfig{
 			DefaultRequiredReviewers: 2,
 			IgnoreLabels:             []string{"area/webui"},
-			ReviewerOverrides: []apicfg.ReviewerOverride{
+			ReviewerOverrides: []e2e.ReviewerOverride{
 				{Label: "bot/light-review", Reviewers: 1},
 			},
 			BotAuthors: []string{"dependabot[bot]"},

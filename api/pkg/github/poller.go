@@ -13,15 +13,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 
-	"github.com/jspdown/dashboard/api/pkg/config"
 	"github.com/jspdown/dashboard/api/pkg/postgres"
 	"github.com/jspdown/dashboard/api/pkg/pullrequest"
 )
 
-// RepoConfig is the per-repo polling cadence. It lives in pkg/config (to keep
-// that package leaf-level) and is aliased here so callers importing
-// pkg/github.RepoConfig still work.
-type RepoConfig = config.RepoConfig
+// RepoConfig is a repo slug paired with its poll cadence.
+type RepoConfig struct {
+	Repo     string
+	Interval time.Duration
+}
 
 // applier matches *Ingester so tests can stub it without a postgres pool.
 type applier interface {
