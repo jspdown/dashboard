@@ -16,10 +16,13 @@ import (
 	"github.com/jspdown/dashboard/e2e/internal/scenarios"
 )
 
+// viewer is the signed-in user every canonical screenshot runs as.
+const viewer = "alex"
+
 // demoOpts is the harness configuration the canonical screenshots
 // run against. Mirrors the production review policy so the rendered
 // dashboard looks like a real deployment.
-func demoOpts(viewer string) []e2e.Option {
+func demoOpts() []e2e.Option {
 	repos := scenarios.DemoRepos()
 	opts := make([]e2e.Option, 0, 2+len(repos))
 	opts = append(opts,
@@ -41,7 +44,7 @@ func demoOpts(viewer string) []e2e.Option {
 
 // seedAndPoll seeds the demo scenario and polls every repo so the
 // dashboard is fully populated before the screenshot is captured.
-func seedAndPoll(t *testing.T, h *e2e.Harness, viewer string) {
+func seedAndPoll(t *testing.T, h *e2e.Harness) {
 	t.Helper()
 	scenarios.Demo(h.Fake, viewer)
 	for _, slug := range scenarios.DemoRepos() {
@@ -55,9 +58,8 @@ func seedAndPoll(t *testing.T, h *e2e.Harness, viewer string) {
 // stale badges. The "headline" screenshot for docs and the README.
 func TestScreenshot_DashboardOverview(t *testing.T) {
 	t.Parallel()
-	const viewer = "alex"
-	h := e2e.Start(t, demoOpts(viewer)...)
-	seedAndPoll(t, h, viewer)
+	h := e2e.Start(t, demoOpts()...)
+	seedAndPoll(t, h)
 	h.Browser.Screenshot("dashboard-overview")
 }
 
@@ -66,9 +68,8 @@ func TestScreenshot_DashboardOverview(t *testing.T) {
 // default) are visible. Useful as a "show me everything" reference.
 func TestScreenshot_AllGroupsExpanded(t *testing.T) {
 	t.Parallel()
-	const viewer = "alex"
-	h := e2e.Start(t, demoOpts(viewer)...)
-	seedAndPoll(t, h, viewer)
+	h := e2e.Start(t, demoOpts()...)
+	seedAndPoll(t, h)
 	h.Browser.ExpandAllGroups()
 	h.Browser.Screenshot("dashboard-all-groups-expanded")
 }
@@ -79,9 +80,8 @@ func TestScreenshot_AllGroupsExpanded(t *testing.T) {
 // what each group means and which config knobs name each label.
 func TestScreenshot_GroupTooltips(t *testing.T) {
 	t.Parallel()
-	const viewer = "alex"
-	h := e2e.Start(t, demoOpts(viewer)...)
-	seedAndPoll(t, h, viewer)
+	h := e2e.Start(t, demoOpts()...)
+	seedAndPoll(t, h)
 	h.Browser.RenderTooltipsOverlay()
 	h.Browser.Screenshot("dashboard-group-tooltips")
 }

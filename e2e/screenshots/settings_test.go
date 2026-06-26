@@ -11,9 +11,8 @@ import (
 // and the team suggestions. Reuses the demo scenario so the rows are populated.
 func TestScreenshot_SettingsRepos(t *testing.T) {
 	t.Parallel()
-	const viewer = "alex"
-	h := e2e.Start(t, demoOpts(viewer)...)
-	seedAndPoll(t, h, viewer)
+	h := e2e.Start(t, demoOpts()...)
+	seedAndPoll(t, h)
 	h.Browser.GotoSettings("/settings/repos")
 	h.Browser.Screenshot("settings-repositories")
 }
@@ -23,9 +22,8 @@ func TestScreenshot_SettingsRepos(t *testing.T) {
 // the freshness windows, all seeded from the demo review policy.
 func TestScreenshot_SettingsRules(t *testing.T) {
 	t.Parallel()
-	const viewer = "alex"
-	h := e2e.Start(t, demoOpts(viewer)...)
-	seedAndPoll(t, h, viewer)
+	h := e2e.Start(t, demoOpts()...)
+	seedAndPoll(t, h)
 	h.Browser.GotoSettings("/settings/rules")
 	h.Browser.Screenshot("settings-review-rules")
 }

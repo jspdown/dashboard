@@ -59,7 +59,15 @@ type Poller struct {
 	nudge chan struct{}
 }
 
-func NewPoller(client *gh.Client, ingester *Ingester, prs *pullrequest.Store, repos repoSource, cursors cursorStore, interval time.Duration, logger zerolog.Logger) *Poller {
+func NewPoller(
+	client *gh.Client,
+	ingester *Ingester,
+	prs *pullrequest.Store,
+	repos repoSource,
+	cursors cursorStore,
+	interval time.Duration,
+	logger zerolog.Logger,
+) *Poller {
 	return &Poller{
 		client:   client,
 		ingester: ingester,
@@ -109,7 +117,7 @@ func (p *Poller) Run(ctx context.Context) {
 				continue
 			}
 
-			rctx, cancel := context.WithCancel(ctx)
+			rctx, cancel := context.WithCancel(ctx) //nolint:gosec // cancel is stored in active and invoked when the repo is dropped or on shutdown.
 			active[repo] = cancel
 
 			repoWG.Go(func() {

@@ -188,16 +188,16 @@ type fakeRepoSource struct {
 	repos []string
 }
 
-func (f *fakeRepoSource) set(repos []string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.repos = repos
-}
-
 func (f *fakeRepoSource) DistinctRepos(context.Context) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.repos...), nil
+}
+
+func (f *fakeRepoSource) set(repos []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.repos = repos
 }
 
 // countingCursorStore records one tick per repo via RecordPoll, which pollRepo
