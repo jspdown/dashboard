@@ -315,7 +315,7 @@ func (b *Browser) Screenshot(name string) {
 	const style = document.createElement('style');
 	style.id = 'e2e-screenshot-sizing';
 	style.textContent =
-		'html, body, #root, [class*="app"], [class*="main"], [class*="prdash"] {' +
+		'html, body, #root, [class*="app"], [class*="main"], [class*="prdash"], .settings, .set-body {' +
 		'  height: auto !important;' +
 		'  min-height: 0 !important;' +
 		'  max-height: none !important;' +
