@@ -79,7 +79,7 @@ cd api && go run ./cmd/dashboard serve   # run the api directly
 docker compose up        # example stack (pulls a pinned published image)
 ```
 
-Required inputs for `dashboard serve`: `DASHBOARD_DATABASE_URL`, `DASHBOARD_GITHUB_TOKEN`, and `--config` / `DASHBOARD_CONFIG` pointing at the YAML config file. Authentication is a trusted-header proxy's job; the dashboard reads the signed-in user from `X-Forwarded-User`.
+Required inputs for `dashboard serve`: `DASHBOARD_DATABASE_URL` and `DASHBOARD_GITHUB_TOKEN`. All other server-level settings are optional flags (e.g. `--poll-interval` / `DASHBOARD_POLL_INTERVAL`, default `1m`). Authentication is a trusted-header proxy's job; the dashboard reads the signed-in user from `X-Forwarded-User`.
 
 ## Conventions
 
@@ -100,7 +100,7 @@ Required inputs for `dashboard serve`: `DASHBOARD_DATABASE_URL`, `DASHBOARD_GITH
 
 - The poller runs one ticker per repo so a slow repo cannot block a fast one. Preserve this isolation if you touch `pkg/github/poller.go`.
 - No webhook setup is required by design; everything works with a personal access token (`repo` scope). Don't introduce features that require admin/webhook access on the target repos.
-- Repositories and review rules are **per-user**, stored in the database and edited from the in-app Settings screens, not in the YAML config. The `--config` file now carries only server-level operational settings (the default poll interval). The relevant pieces:
+- Repositories and review rules are **per-user**, stored in the database and edited from the in-app Settings screens, not in any config file. Server-level operational settings (the default poll interval) are plain `dashboard serve` flags. The relevant pieces:
   - `user_repos`, `user_settings`, `user_reviewer_overrides` tables (migration `20260626120000_per_user_settings`).
   - `pkg/pullrequest/UserStore` persists them; `SettingsHandler` serves `/api/settings/repos`, `/api/settings/rules`, and the per-user `/api/config`.
   - `PostgresService.List` loads the viewer's observed repos + settings, snapshots only those repos, and applies the viewer's `Rules`. Built-in defaults for a user with no saved row live in `pkg/pullrequest/usersettings.go`.

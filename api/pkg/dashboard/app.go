@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	gh "github.com/google/go-github/v85/github"
@@ -25,7 +26,6 @@ import (
 
 	"github.com/jspdown/dashboard/api/pkg/auth"
 	"github.com/jspdown/dashboard/api/pkg/buildinfo"
-	"github.com/jspdown/dashboard/api/pkg/config"
 	dgithub "github.com/jspdown/dashboard/api/pkg/github"
 	"github.com/jspdown/dashboard/api/pkg/pullrequest"
 )
@@ -33,7 +33,8 @@ import (
 // Deps is the injection surface for assembling a Dashboard. The caller opens
 // the pool and runs migrations before calling New, and closes the pool on exit.
 type Deps struct {
-	Config       *config.Config
+	// PollInterval is the default per-repo poll cadence.
+	PollInterval time.Duration
 	Pool         *pgxpool.Pool
 	GitHubClient *gh.Client
 	Logger       zerolog.Logger
@@ -59,7 +60,7 @@ func New(d Deps) *Dashboard {
 	prStore := pullrequest.NewStore(d.Pool)
 	userStore := pullrequest.NewUserStore(d.Pool)
 	ingester := dgithub.NewIngester(d.Pool, prStore)
-	poller := dgithub.NewPoller(d.Pool, d.GitHubClient, ingester, prStore, userStore, d.Config.Poll.Interval, d.Logger)
+	poller := dgithub.NewPoller(d.GitHubClient, ingester, prStore, userStore, userStore, d.PollInterval, d.Logger)
 
 	prService := pullrequest.NewPostgresService(prStore, userStore)
 	prHandler := pullrequest.NewHandler(prService, poller, d.Logger)

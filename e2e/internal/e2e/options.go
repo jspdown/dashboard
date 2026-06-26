@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"time"
-
-	apicfg "github.com/jspdown/dashboard/api/pkg/config"
 )
 
 // Option configures the harness. Use the With* helpers; options stays
@@ -49,13 +47,6 @@ func defaultOptions() options {
 		},
 		anchor: time.Now().UTC(),
 	}
-}
-
-// toAppConfig builds the server-level config the harness hands to the dashboard
-// package. Repos and review rules are per-user, seeded into the database for the
-// viewer (see seedViewer), so the config only carries the poll cadence.
-func (o options) toAppConfig() *apicfg.Config {
-	return &apicfg.Config{Poll: apicfg.PollConfig{Interval: time.Minute}}
 }
 
 // WithViewer sets the viewer login (default "alex"). The harness injects it as

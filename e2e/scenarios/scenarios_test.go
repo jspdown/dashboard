@@ -16,9 +16,7 @@ import (
 
 // TestIgnoreLabelHidesPRFromReviewQueue exercises the ignore_labels
 // path: a PR carrying area/webui must not appear in "Needs my review",
-// and removing the label re-surfaces it on the next poll. The most
-// fragile invariant of the YAML-config refactor, kept here to catch
-// regressions.
+// and removing the label re-surfaces it on the next poll.
 func TestIgnoreLabelHidesPRFromReviewQueue(t *testing.T) {
 	t.Parallel()
 	h := e2e.Start(t,

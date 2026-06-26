@@ -94,8 +94,6 @@ func Boot(ctx context.Context, opts ...Option) (*Stack, error) {
 		return nil, rollback(fmt.Errorf("seed viewer: %w", err))
 	}
 
-	cfg := o.toAppConfig()
-
 	ghClient := gh.NewClient(nil).WithAuthToken("fake-token")
 	fakeBase, err := url.Parse(fake.URL())
 	if err != nil {
@@ -105,7 +103,7 @@ func Boot(ctx context.Context, opts ...Option) (*Stack, error) {
 	ghClient.UploadURL = fakeBase
 
 	app := dashboard.New(dashboard.Deps{
-		Config:       cfg,
+		PollInterval: time.Minute,
 		Pool:         pool,
 		GitHubClient: ghClient,
 		Logger:       zerolog.Nop(),

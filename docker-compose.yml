@@ -16,7 +16,7 @@
 #
 # Then open http://localhost:4180 and add the repos you want to observe
 # from the in-app Settings -> Repositories screen (repos and review rules
-# are per-user now, stored in the database, not in config.yaml).
+# are per-user now, stored in the database).
 #
 # No-auth shortcut for hacking on the UI: `make dev-e2e` runs the API
 # pre-seeded with demo data and stamps the user header for you, so you
@@ -52,11 +52,8 @@ services:
       DASHBOARD_API_LOG_LEVEL: "info"
       # DASHBOARD_WEB_DIR is baked into the image (it points at the Nix-built
       # bundle); do not override it here or static serving breaks.
-      DASHBOARD_CONFIG: "/etc/dashboard/config.yaml"
       DASHBOARD_DATABASE_URL: "postgres://dashboard:dashboard@postgres:5432/dashboard?sslmode=disable"
       DASHBOARD_GITHUB_TOKEN: "${DASHBOARD_GITHUB_TOKEN:?set a PAT with repo scope}"
-    volumes:
-      - ./config.example.yaml:/etc/dashboard/config.yaml:ro
     depends_on:
       postgres:
         condition: service_healthy

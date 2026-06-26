@@ -56,18 +56,18 @@ go run ./cmd/dashboard serve
 
 Repositories and review rules are **per-user**: each signed-in user manages the repos they observe and tunes their review policy (required reviewers, per-label overrides, ignored labels, bot authors, freshness windows) from the in-app **Settings** screens. That state lives in the database, keyed by the signed-in user.
 
-The YAML file referenced by `--config` (or `DASHBOARD_CONFIG`) now carries only server-level settings, currently the default poll cadence. See [`config.example.yaml`](config.example.yaml). Connection strings and secrets stay in env vars; authentication has no settings on the dashboard side.
+All server-level settings are flags (with backing env vars). Connection strings and secrets stay in env vars; authentication has no settings on the dashboard side.
 
-| Flag             | Env var                   | Default | Description                               |
-|------------------|---------------------------|---------|-------------------------------------------|
-| `--addr`         | `DASHBOARD_API_ADDR`      | `:8080` | HTTP listen address                       |
-| `--log-level`    | `DASHBOARD_API_LOG_LEVEL` | `info`  | trace/debug/info/warn/error               |
-| `--database-url` | `DASHBOARD_DATABASE_URL`  |         | Postgres DSN (required)                   |
-| `--github-token` | `DASHBOARD_GITHUB_TOKEN`  |         | Server PAT with `repo` scope (required)   |
-| `--config`       | `DASHBOARD_CONFIG`        |         | Path to the YAML config file (required)   |
-| `--web-dir`      | `DASHBOARD_WEB_DIR`       | `/web`  | Built frontend directory (empty disables) |
+| Flag              | Env var                   | Default | Description                               |
+|-------------------|---------------------------|---------|-------------------------------------------|
+| `--addr`          | `DASHBOARD_API_ADDR`      | `:8080` | HTTP listen address                       |
+| `--log-level`     | `DASHBOARD_API_LOG_LEVEL` | `info`  | trace/debug/info/warn/error               |
+| `--database-url`  | `DASHBOARD_DATABASE_URL`  |         | Postgres DSN (required)                   |
+| `--github-token`  | `DASHBOARD_GITHUB_TOKEN`  |         | Server PAT with `repo` scope (required)   |
+| `--poll-interval` | `DASHBOARD_POLL_INTERVAL` | `1m`    | Default per-repo poll cadence             |
+| `--web-dir`       | `DASHBOARD_WEB_DIR`       | `/web`  | Built frontend directory (empty disables) |
 
-`poll.interval` is a Go duration (`30s`, `5m`, `1h`) and defaults to `1m`; it sets the per-repo poll cadence.
+`--poll-interval` is a Go duration (`5m`, `1h`) and must be at least `1m` to stay within GitHub's rate limit.
 
 ## Authentication
 

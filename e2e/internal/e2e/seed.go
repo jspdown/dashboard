@@ -9,10 +9,6 @@ import (
 	"github.com/jspdown/dashboard/api/pkg/pullrequest"
 )
 
-// seedViewer writes the viewer's repo subscriptions and review rules the same
-// way production does, through pullrequest.UserStore, so the test seed can't
-// drift from the app's persistence. It backs the WithRepo/WithReview/WithFreshness
-// test options.
 func seedViewer(ctx context.Context, pool *pgxpool.Pool, o options) error {
 	store := pullrequest.NewUserStore(pool)
 
