@@ -32,12 +32,15 @@ func (v *Verifier) Verify(ctx context.Context, slug string) error {
 	if !ok || owner == "" || name == "" {
 		return fmt.Errorf("%w: %q is not in owner/name form", pullrequest.ErrRepoInaccessible, slug)
 	}
+
 	if _, _, err := v.client.Repositories.Get(ctx, owner, name); err != nil {
 		var ghErr *gh.ErrorResponse
 		if errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound {
 			return pullrequest.ErrRepoInaccessible
 		}
+
 		return fmt.Errorf("verifying %s: %w", slug, err)
 	}
+
 	return nil
 }

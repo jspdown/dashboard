@@ -50,13 +50,16 @@ func (s *PostgresService) List(ctx context.Context, opts ListOpts) ([]PullReques
 
 	rules := NewRules(settings)
 	now := time.Now()
+
 	out := make([]PullRequestView, 0, len(snapshots))
 	for _, snap := range snapshots {
 		latest := LatestReviewsByReviewer(snap.Reviews)
+
 		group := rules.ClassifyGroup(snap.PullRequest, u.Login, latest, snap.Labels, snap.ReviewRequests)
 		if group == "" {
 			continue
 		}
+
 		required, _ := rules.RequiredReviewers(snap.Labels)
 		out = append(out, newPullRequestView(snap, group, u.Login, latest, required, now))
 	}

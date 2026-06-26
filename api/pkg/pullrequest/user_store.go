@@ -140,6 +140,50 @@ func (s *UserStore) RepoStatuses(ctx context.Context, repos []string) (map[strin
 	return out, nil
 }
 
+// LoadCursor returns the repo's sync cursor: the updated_at high-water mark from
+// the last successful poll. A repo with no cursor row yet returns the zero time.
+func (s *UserStore) LoadCursor(ctx context.Context, repo string) (time.Time, error) {
+	var ts *time.Time
+	err := postgres.QueryRow(ctx, s.pool,
+		`SELECT last_synced_at FROM repo_sync_cursors WHERE repo = $1`,
+		[]any{repo}).Scan(&ts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("loading cursor: %w", err)
+	}
+	if ts == nil {
+		return time.Time{}, nil
+	}
+	return *ts, nil
+}
+
+// SaveCursor advances the repo's sync cursor to ts. It touches only
+// last_synced_at, leaving the health columns to RecordPoll.
+func (s *UserStore) SaveCursor(ctx context.Context, repo string, ts time.Time) error {
+	if _, err := postgres.Exec(ctx, s.pool, `
+INSERT INTO repo_sync_cursors (repo, last_synced_at) VALUES ($1, $2)
+ON CONFLICT (repo) DO UPDATE SET last_synced_at = EXCLUDED.last_synced_at`,
+		[]any{repo, ts}); err != nil {
+		return fmt.Errorf("saving cursor: %w", err)
+	}
+	return nil
+}
+
+// RecordPoll stamps the last poll attempt time and its outcome on the repo's
+// cursor row, touching only the health columns and leaving the cursor
+// (last_synced_at) to SaveCursor. A nil lastError clears a prior error.
+func (s *UserStore) RecordPoll(ctx context.Context, repo string, lastError *string) error {
+	if _, err := postgres.Exec(ctx, s.pool, `
+INSERT INTO repo_sync_cursors (repo, last_polled_at, last_error) VALUES ($1, now(), $2)
+ON CONFLICT (repo) DO UPDATE SET last_polled_at = now(), last_error = EXCLUDED.last_error`,
+		[]any{repo, lastError}); err != nil {
+		return fmt.Errorf("recording poll status: %w", err)
+	}
+	return nil
+}
+
 type userSettingsRow struct {
 	DefaultRequiredReviewers int      `db:"default_required_reviewers"`
 	StaleAfterDays           int      `db:"stale_after_days"`

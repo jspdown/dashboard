@@ -9,11 +9,8 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v85/github"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 
-	"github.com/jspdown/dashboard/api/pkg/postgres"
 	"github.com/jspdown/dashboard/api/pkg/pullrequest"
 )
 
@@ -29,9 +26,18 @@ type applier interface {
 }
 
 // repoSource yields the set of repos the poller should service: the union of
-// every user's subscriptions. *pullrequest.UserStore satisfies it.
+// every user's subscriptions.
 type repoSource interface {
 	DistinctRepos(ctx context.Context) ([]string, error)
+}
+
+// cursorStore persists per-repo sync cursors and poll health. The poller routes
+// every repo_sync_cursors write through it so the store owns all Postgres
+// access. *pullrequest.UserStore satisfies it.
+type cursorStore interface {
+	LoadCursor(ctx context.Context, repo string) (time.Time, error)
+	SaveCursor(ctx context.Context, repo string, ts time.Time) error
+	RecordPoll(ctx context.Context, repo string, lastError *string) error
 }
 
 // Poller pulls PR state from GitHub on a per-repo schedule and feeds it through
@@ -39,11 +45,11 @@ type repoSource interface {
 // subscriptions, starting a ticker for newly-observed repos and stopping it for
 // repos no longer observed by anyone.
 type Poller struct {
-	pool     *pgxpool.Pool
 	client   *gh.Client
 	ingester applier
 	prs      staleSource
 	repos    repoSource
+	cursors  cursorStore
 	interval time.Duration
 	logger   zerolog.Logger
 
@@ -53,13 +59,13 @@ type Poller struct {
 	nudge chan struct{}
 }
 
-func NewPoller(pool *pgxpool.Pool, client *gh.Client, ingester *Ingester, prs *pullrequest.Store, repos repoSource, interval time.Duration, logger zerolog.Logger) *Poller {
+func NewPoller(client *gh.Client, ingester *Ingester, prs *pullrequest.Store, repos repoSource, cursors cursorStore, interval time.Duration, logger zerolog.Logger) *Poller {
 	return &Poller{
-		pool:     pool,
 		client:   client,
 		ingester: ingester,
 		prs:      prs,
 		repos:    repos,
+		cursors:  cursors,
 		interval: interval,
 		nudge:    make(chan struct{}, 1),
 		logger:   logger.With().Str("component", "github_poller").Logger(),
@@ -102,15 +108,22 @@ func (p *Poller) Run(ctx context.Context) {
 			if _, running := active[repo]; running {
 				continue
 			}
+
 			rctx, cancel := context.WithCancel(ctx)
 			active[repo] = cancel
-			repoWG.Go(func() { p.runRepo(rctx, RepoConfig{Repo: repo, Interval: p.interval}) })
+
+			repoWG.Go(func() {
+				p.runRepo(rctx, RepoConfig{Repo: repo, Interval: p.interval})
+			})
+
 			p.logger.Info().Str("repo", repo).Msg("Observing repo")
 		}
+
 		for repo, cancel := range active {
 			if _, want := desired[repo]; !want {
 				cancel()
 				delete(active, repo)
+
 				p.logger.Info().Str("repo", repo).Msg("Stopped observing repo")
 			}
 		}
@@ -127,9 +140,12 @@ func (p *Poller) Run(ctx context.Context) {
 			for _, cancel := range active {
 				cancel()
 			}
+
 			repoWG.Wait()
 			watch.Wait()
+
 			p.logger.Info().Msg("Poller stopped")
+
 			return
 		case <-t.C:
 			reconcile()
@@ -283,9 +299,9 @@ func (p *Poller) pollRepo(ctx context.Context, r RepoConfig) (err error) {
 		return fmt.Errorf("invalid repo %q, expected owner/name", r.Repo)
 	}
 
-	cursor, err := p.loadCursor(ctx, r.Repo)
+	cursor, err := p.cursors.LoadCursor(ctx, r.Repo)
 	if err != nil {
-		return fmt.Errorf("loading cursor: %w", err)
+		return err
 	}
 
 	// On first run, restrict to open PRs to bound the backfill. Once we have a
@@ -316,8 +332,8 @@ func (p *Poller) pollRepo(ctx context.Context, r RepoConfig) (err error) {
 	// failed PR would skip it forever: the next poll asks for "anything updated
 	// since the cursor", and the failed PR is no longer in that window.
 	if applied == len(prs) && !newestSeen.IsZero() {
-		if err := p.saveCursor(ctx, r.Repo, newestSeen); err != nil {
-			return fmt.Errorf("saving cursor: %w", err)
+		if err := p.cursors.SaveCursor(ctx, r.Repo, newestSeen); err != nil {
+			return err
 		}
 	}
 
@@ -464,38 +480,11 @@ func (p *Poller) applyCheckRuns(ctx context.Context, owner, name string, repo *g
 	}
 }
 
-func (p *Poller) loadCursor(ctx context.Context, repo string) (time.Time, error) {
-	var ts *time.Time
-	err := postgres.QueryRow(ctx, p.pool,
-		`SELECT last_synced_at FROM repo_sync_cursors WHERE repo = $1`,
-		[]any{repo}).Scan(&ts)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return time.Time{}, nil
-	}
-	if err != nil {
-		return time.Time{}, err
-	}
-	if ts == nil {
-		return time.Time{}, nil
-	}
-	return *ts, nil
-}
-
-func (p *Poller) saveCursor(ctx context.Context, repo string, ts time.Time) error {
-	_, err := postgres.Exec(ctx, p.pool, `
-INSERT INTO repo_sync_cursors (repo, last_synced_at) VALUES ($1, $2)
-ON CONFLICT (repo) DO UPDATE SET last_synced_at = EXCLUDED.last_synced_at`,
-		[]any{repo, ts})
-	return err
-}
-
-// recordPoll stamps the last poll attempt time and its error (nil on success,
-// which clears a prior error) on the repo's cursor row. It touches only the
-// health columns, leaving last_synced_at (the cursor) to saveCursor. Best
-// effort: a write failure is logged, never propagated, and a canceled context
-// skips the write entirely.
+// recordPoll persists the poll outcome on the repo's cursor row via the store.
+// Best effort: a write failure is logged, never propagated, and a canceled
+// context skips the write entirely. A nil pollErr clears a prior error.
 func (p *Poller) recordPoll(ctx context.Context, repo string, pollErr error) {
-	if p.pool == nil || ctx.Err() != nil {
+	if p.cursors == nil || ctx.Err() != nil {
 		return
 	}
 	var errText *string
@@ -503,10 +492,7 @@ func (p *Poller) recordPoll(ctx context.Context, repo string, pollErr error) {
 		s := pollErr.Error()
 		errText = &s
 	}
-	if _, err := postgres.Exec(ctx, p.pool, `
-INSERT INTO repo_sync_cursors (repo, last_polled_at, last_error) VALUES ($1, now(), $2)
-ON CONFLICT (repo) DO UPDATE SET last_polled_at = now(), last_error = EXCLUDED.last_error`,
-		[]any{repo, errText}); err != nil {
+	if err := p.cursors.RecordPoll(ctx, repo, errText); err != nil {
 		p.logger.Warn().Err(err).Str("repo", repo).Msg("Recording poll status failed")
 	}
 }

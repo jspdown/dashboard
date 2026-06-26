@@ -13,8 +13,7 @@ import (
 	"github.com/jspdown/dashboard/api/pkg/auth"
 )
 
-// SettingsStore is the persistence the settings handler needs. *UserStore
-// satisfies it; tests stub it.
+// SettingsStore stores user settings.
 type SettingsStore interface {
 	ListRepos(ctx context.Context, userLogin string) ([]string, error)
 	HasRepo(ctx context.Context, userLogin, repo string) (bool, error)
@@ -25,21 +24,18 @@ type SettingsStore interface {
 	SaveSettings(ctx context.Context, userLogin string, us UserSettings) error
 }
 
-// RepoOverviewer computes the per-repo rows (health + counts) for the
-// Repositories screen. *PostgresService satisfies it.
+// RepoOverviewer gives an overview of the repositories.
 type RepoOverviewer interface {
 	RepoOverview(ctx context.Context) ([]RepoView, error)
 }
 
-// RepoVerifier confirms the server PAT can reach a repo before we start polling
-// it. github.Verifier satisfies it; it returns ErrRepoInaccessible on a miss.
+// RepoVerifier verifies that we can use the given repository.
 type RepoVerifier interface {
 	Verify(ctx context.Context, slug string) error
 }
 
-// RepoPoller lets the handler poke the poller after a subscription change so the
-// new repo starts polling (and its first PRs land) without waiting for the next
-// reconcile tick. *github.Poller satisfies it.
+// RepoPoller lets the handler poke the poller after a subscription has changed, so the
+// new repo starts polling without waiting for the next reconciliation tick.
 type RepoPoller interface {
 	RunOnce(ctx context.Context, slug string) error
 	Nudge()
