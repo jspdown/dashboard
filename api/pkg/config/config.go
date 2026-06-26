@@ -1,16 +1,39 @@
-// Package config loads the dashboard's runtime configuration from a
-// single YAML file.
+// Package config loads the dashboard's server-level runtime configuration from
+// a single YAML file.
+//
+// Workflow settings (which repos to poll, review-policy labels, freshness
+// windows) used to live here and applied globally. They are now per-user and
+// stored in the database (see pkg/pullrequest), so the on-disk config only
+// carries server-level operational settings such as the default poll cadence.
 package config
 
 import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// Config is the full on-disk config schema.
+type Config struct {
+	Poll PollConfig `yaml:"poll"`
+}
+
+// PollConfig holds the server-level polling settings shared by every repo.
+type PollConfig struct {
+	// Interval is the default per-repo poll cadence. Every observed repo is
+	// polled on its own ticker at this interval, so a slow repo can't block a
+	// fast one.
+	Interval time.Duration `yaml:"interval"`
+}
+
+// The types below describe per-user workflow data. They no longer appear in the
+// on-disk Config (that data lives in the database), but they remain a convenient
+// shared vocabulary for expressing a repo subscription or a review policy, used
+// by the e2e harness to seed a viewer's state and by the GitHub poller for repo
+// verification.
 
 // RepoConfig binds a repo slug to its polling cadence.
 type RepoConfig struct {
@@ -18,21 +41,15 @@ type RepoConfig struct {
 	Interval time.Duration `yaml:"interval"`
 }
 
-// Config is the full on-disk config schema.
-type Config struct {
-	Repos     []RepoConfig    `yaml:"repos"`
-	Review    ReviewConfig    `yaml:"review"`
-	Freshness FreshnessConfig `yaml:"freshness"`
-}
-
-// ReviewConfig describes how PRs are routed through the review queue.
+// ReviewConfig describes how PRs are routed through a user's review queue.
 type ReviewConfig struct {
-	// DefaultRequiredReviewers defines how much reviewers we need per PR.
+	// DefaultRequiredReviewers defines how many reviewers a PR needs.
 	DefaultRequiredReviewers int `yaml:"defaultRequiredReviewers"`
 	// IgnoreLabels defines the labels that identify PRs we want to ignore.
 	IgnoreLabels []string `yaml:"ignoreLabels"`
-	// ReviewerOverrides defines per-label overrides for the required-reviewer count.
-	// The first matching label wins; unmatched labels fall back to DefaultRequiredReviewers.
+	// ReviewerOverrides defines per-label overrides for the required-reviewer
+	// count. The first matching label wins; unmatched labels fall back to
+	// DefaultRequiredReviewers.
 	ReviewerOverrides []ReviewerOverride `yaml:"reviewerOverrides"`
 	// BotAuthors defines who are the bots.
 	BotAuthors []string `yaml:"botAuthors"`
@@ -49,6 +66,9 @@ type FreshnessConfig struct {
 	StaleAfterDays     int `yaml:"staleAfterDays"`
 	RecentlyMergedDays int `yaml:"recentlyMergedDays"`
 }
+
+// defaultPollInterval is the per-repo poll cadence used when the config omits it.
+const defaultPollInterval = time.Minute
 
 // Load reads, parses, defaults, and validates the YAML config at path.
 func Load(path string) (*Config, error) {
@@ -72,54 +92,14 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
-	if c.Review.DefaultRequiredReviewers == 0 {
-		c.Review.DefaultRequiredReviewers = 2
-	}
-	if c.Freshness.StaleAfterDays == 0 {
-		c.Freshness.StaleAfterDays = 5
-	}
-	if c.Freshness.RecentlyMergedDays == 0 {
-		c.Freshness.RecentlyMergedDays = 7
+	if c.Poll.Interval == 0 {
+		c.Poll.Interval = defaultPollInterval
 	}
 }
 
 func (c *Config) validate() error {
-	if len(c.Repos) == 0 {
-		return errors.New("at least one repo is required")
-	}
-
-	seen := make(map[string]struct{}, len(c.Repos))
-	for i, r := range c.Repos {
-		owner, name, ok := strings.Cut(r.Repo, "/")
-		if !ok || owner == "" || name == "" {
-			return fmt.Errorf("repos[%d]: %q is not in owner/name form", i, r.Repo)
-		}
-		if r.Interval <= 0 {
-			return fmt.Errorf("repos[%d] (%s): interval must be > 0", i, r.Repo)
-		}
-		if _, dup := seen[r.Repo]; dup {
-			return fmt.Errorf("repos: %s appears more than once", r.Repo)
-		}
-		seen[r.Repo] = struct{}{}
-	}
-
-	if c.Review.DefaultRequiredReviewers < 0 {
-		return errors.New("review.defaultRequiredReviewers must be >= 0")
-	}
-	for i, o := range c.Review.ReviewerOverrides {
-		if strings.TrimSpace(o.Label) == "" {
-			return fmt.Errorf("review.reviewerOverrides[%d]: label is required", i)
-		}
-		if o.Reviewers < 0 {
-			return fmt.Errorf("review.reviewerOverrides[%d] (%s): reviewers must be >= 0", i, o.Label)
-		}
-	}
-
-	if c.Freshness.StaleAfterDays <= 0 {
-		return errors.New("freshness.staleAfterDays must be > 0")
-	}
-	if c.Freshness.RecentlyMergedDays <= 0 {
-		return errors.New("freshness.recentlyMergedDays must be > 0")
+	if c.Poll.Interval <= 0 {
+		return errors.New("poll.interval must be > 0")
 	}
 	return nil
 }

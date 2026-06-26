@@ -31,15 +31,13 @@ func defaultOptions() options {
 	}
 }
 
-// toAppConfig builds the config the harness hands to the dashboard package.
-// There's no auth config: that's the upstream proxy's job, faked here by
-// injecting X-Forwarded-User on every request.
+// toAppConfig builds the server-level config the harness hands to the dashboard
+// package. Repos and review rules are per-user now and seeded into the database
+// for the viewer (see Boot), so the config only carries the poll cadence. There's
+// no auth config: that's the upstream proxy's job, faked here by injecting
+// X-Forwarded-User on every request.
 func (o options) toAppConfig() *apicfg.Config {
-	return &apicfg.Config{
-		Repos:     o.repos,
-		Review:    o.review,
-		Freshness: o.fresh,
-	}
+	return &apicfg.Config{Poll: apicfg.PollConfig{Interval: time.Minute}}
 }
 
 // WithViewer sets the viewer login (default "alex"). The harness injects it as

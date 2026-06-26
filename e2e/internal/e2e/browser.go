@@ -71,6 +71,19 @@ func (b *Browser) Goto(path string) {
 	}
 }
 
+// GotoSettings navigates to a settings hash route (e.g. "/settings/repos") and
+// waits for the screen's data to load, signaled by data-settings-ready="true".
+func (b *Browser) GotoSettings(hashPath string) {
+	b.t.Helper()
+	url := b.baseURL + "/#" + hashPath
+	if err := chromedp.Run(b.tabCtx,
+		chromedp.Navigate(url),
+		chromedp.WaitVisible(`[data-settings-ready="true"]`, chromedp.ByQuery),
+	); err != nil {
+		b.dumpForFailure("goto-settings "+url, err)
+	}
+}
+
 // Reload does a full page reload and waits for the SPA to remount and
 // refetch /api/prs. Two races to defeat: Reload + WaitVisible can match
 // the old DOM still attached during unload, so we stamp a nonce and Poll

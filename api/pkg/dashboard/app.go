@@ -36,11 +36,7 @@ type Deps struct {
 	Config       *config.Config
 	Pool         *pgxpool.Pool
 	GitHubClient *gh.Client
-	// PollRepos is the set of repos the poller services. Prod passes the
-	// post-VerifyRepos accessible subset; tests pass cfg.Repos directly. Empty
-	// makes the poller a no-op.
-	PollRepos []config.RepoConfig
-	Logger    zerolog.Logger
+	Logger       zerolog.Logger
 	// WebDir, when non-empty, serves the built frontend bundle from this dir.
 	WebDir string
 }
@@ -60,18 +56,22 @@ func (d *Dashboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // New builds a Dashboard from the injected dependencies.
 func New(d Deps) *Dashboard {
-	prStore := pullrequest.NewStore(d.Pool, d.Config.Freshness)
+	prStore := pullrequest.NewStore(d.Pool)
+	userStore := pullrequest.NewUserStore(d.Pool)
 	ingester := dgithub.NewIngester(d.Pool, prStore)
-	poller := dgithub.NewPoller(d.Pool, d.GitHubClient, ingester, prStore, d.PollRepos, d.Logger)
+	poller := dgithub.NewPoller(d.Pool, d.GitHubClient, ingester, prStore, userStore, d.Config.Poll.Interval, d.Logger)
 
-	rules := pullrequest.NewRules(d.Config.Review)
-	prService := pullrequest.NewPostgresService(prStore, d.Config.Freshness, rules)
-	prHandler := pullrequest.NewHandler(prService, pullrequest.UIConfigFrom(d.Config), poller, d.Logger)
+	prService := pullrequest.NewPostgresService(prStore, userStore)
+	prHandler := pullrequest.NewHandler(prService, poller, d.Logger)
+
+	verifier := dgithub.NewVerifier(d.GitHubClient)
+	settingsHandler := pullrequest.NewSettingsHandler(userStore, prService, verifier, poller, d.Logger)
 
 	r := chi.NewRouter()
 	r.Route("/api", func(r chi.Router) {
 		r.Use(auth.TrustedHeader)
 		prHandler.Routes(r)
+		settingsHandler.Routes(r)
 		r.Get("/build", buildinfo.Handler())
 		r.Get("/me", meHandler())
 	})

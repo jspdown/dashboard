@@ -67,3 +67,79 @@ export async function getMe() {
   const res = await apiFetch("/api/me");
   return res.json();
 }
+
+// ---- Per-user settings: repositories & review rules ----
+
+// ApiError carries the HTTP status and the server's message so the settings
+// screens can show "not found / no access" inline rather than a generic failure.
+export class ApiError extends Error {
+  constructor(status, message) {
+    super(message || `request failed: ${status}`);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+// mutate is a fetch wrapper for write endpoints: it preserves UnauthorizedError
+// (so useApi can re-auth) and surfaces the server's message via ApiError.
+async function mutate(path, opts) {
+  const res = await fetch(path, opts);
+  if (res.status === 401) throw new UnauthorizedError(path);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new ApiError(res.status, body.trim());
+  }
+  return res;
+}
+
+/** Returns the repos the viewer observes, each with health and PR counts. */
+export async function getRepos() {
+  const res = await apiFetch("/api/settings/repos");
+  return res.json();
+}
+
+/** Returns repos the viewer's teammates observe but the viewer hasn't added. */
+export async function getRepoSuggestions() {
+  const res = await apiFetch("/api/settings/repos/suggestions");
+  return res.json();
+}
+
+/**
+ * Adds a repo to the viewer's dashboard after the server verifies access.
+ * Throws ApiError on a bad slug (400), duplicate (409), or no access (422).
+ * @param {string} repo owner/name slug
+ */
+export async function addRepo(repo) {
+  const res = await mutate("/api/settings/repos", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo }),
+  });
+  return res.json();
+}
+
+/** Removes a repo from the viewer's dashboard. @param {string} repo owner/name */
+export async function removeRepo(repo) {
+  await mutate(`/api/settings/repos/${repo}`, { method: "DELETE" });
+}
+
+/** Re-verifies access to a repo that lost it, restarting polling on success. */
+export async function recheckRepo(repo) {
+  await mutate(`/api/settings/repos/${repo}/recheck`, { method: "POST" });
+}
+
+/** Returns the viewer's review rules (the editable Review rules screen shape). */
+export async function getRules() {
+  const res = await apiFetch("/api/settings/rules");
+  return res.json();
+}
+
+/** Replaces the viewer's review rules and returns the saved (normalized) shape. */
+export async function saveRules(rules) {
+  const res = await mutate("/api/settings/rules", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(rules),
+  });
+  return res.json();
+}
