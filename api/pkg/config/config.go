@@ -1,10 +1,6 @@
 // Package config loads the dashboard's server-level runtime configuration from
-// a single YAML file.
-//
-// Workflow settings (which repos to poll, review-policy labels, freshness
-// windows) used to live here and applied globally. They are now per-user and
-// stored in the database (see pkg/pullrequest), so the on-disk config only
-// carries server-level operational settings such as the default poll cadence.
+// a single YAML file. Per-user workflow settings (repos, review rules) live in
+// the database, not here.
 package config
 
 import (
@@ -29,11 +25,9 @@ type PollConfig struct {
 	Interval time.Duration `yaml:"interval"`
 }
 
-// The types below describe per-user workflow data. They no longer appear in the
-// on-disk Config (that data lives in the database), but they remain a convenient
-// shared vocabulary for expressing a repo subscription or a review policy, used
-// by the e2e harness to seed a viewer's state and by the GitHub poller for repo
-// verification.
+// The types below are a shared vocabulary for a repo subscription or review
+// policy, used by the e2e harness to seed a viewer's state and by the poller for
+// repo verification. They are not part of the on-disk Config.
 
 // RepoConfig binds a repo slug to its polling cadence.
 type RepoConfig struct {

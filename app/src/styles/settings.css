@@ -1,8 +1,7 @@
 /* ============================================================
-   Per-user settings screens: Repositories + Review rules.
-   Ported from the Signal Dashboard design. Uses global class names
-   (like tokens.css / global.css) because the settings atoms are shared,
-   class-based components rather than colocated CSS-module styles.
+   Settings screens: Repositories + Review rules.
+   Uses global class names (like tokens.css / global.css) because the settings
+   atoms are shared, class-based components rather than colocated CSS modules.
    ============================================================ */
 
 /* ---------- shared atoms ---------- */

@@ -1,8 +1,6 @@
--- Per-user repositories and review rules. Repos and review policy used to live
--- in the YAML config and applied globally; they now live in the database, scoped
--- to each viewer. The server still polls with one PAT, but the set of polled
--- repos is the union of every user's subscriptions, and each user sees only
--- their own repos filtered by their own rules.
+-- Per-user repositories and review rules, scoped to each viewer. The server
+-- polls with one PAT over the union of every user's subscriptions, and each user
+-- sees only their own repos filtered by their own rules.
 
 -- user_repos: which repos a user observes. The poller services the distinct
 -- union across all users; List filters each viewer to their own subset.

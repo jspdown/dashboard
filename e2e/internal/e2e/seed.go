@@ -9,8 +9,8 @@ import (
 
 // seedViewer writes the viewer's repo subscriptions and review rules straight
 // into the database, the same rows the Repositories and Review rules settings
-// screens write in production. It lets the existing WithRepo/WithReview/
-// WithFreshness option vocabulary keep working now that this state is per-user.
+// screens write in production. It backs the WithRepo/WithReview/WithFreshness
+// test options.
 func seedViewer(ctx context.Context, pool *pgxpool.Pool, o options) error {
 	for _, r := range o.repos {
 		if _, err := pool.Exec(ctx,

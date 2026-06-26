@@ -32,10 +32,8 @@ func defaultOptions() options {
 }
 
 // toAppConfig builds the server-level config the harness hands to the dashboard
-// package. Repos and review rules are per-user now and seeded into the database
-// for the viewer (see Boot), so the config only carries the poll cadence. There's
-// no auth config: that's the upstream proxy's job, faked here by injecting
-// X-Forwarded-User on every request.
+// package. Repos and review rules are per-user, seeded into the database for the
+// viewer (see seedViewer), so the config only carries the poll cadence.
 func (o options) toAppConfig() *apicfg.Config {
 	return &apicfg.Config{Poll: apicfg.PollConfig{Interval: time.Minute}}
 }

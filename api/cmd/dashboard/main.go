@@ -139,8 +139,6 @@ func serve(ctx context.Context, conf Config) error {
 	}
 	logger.Info().Str("login", ghUser.GetLogin()).Msg("GitHub token authenticated")
 
-	// Repos are per-user now: the poller discovers the union of everyone's
-	// subscriptions from the database and verifies access lazily as it polls.
 	app := dashboard.New(dashboard.Deps{
 		Config:       cfg,
 		Pool:         pool,

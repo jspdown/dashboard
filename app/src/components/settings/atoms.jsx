@@ -3,8 +3,8 @@ import { useState } from "react";
 import Avatar from "../Avatar.jsx";
 import Icon from "../Icon.jsx";
 
-// Shared atoms for the per-user settings screens, ported from the design's
-// settings-atoms. They render the design's global class names (see settings.css).
+// Shared atoms for the settings screens. They render global class names (see
+// settings.css).
 
 const HEALTH = {
   ok: { cls: "success", label: "polling" },

@@ -90,9 +90,6 @@ func Boot(ctx context.Context, opts ...Option) (*Stack, error) {
 	}
 	closers = append(closers, pool.Close)
 
-	// Repos and review rules are per-user; seed them for the viewer so the
-	// dashboard renders the configured policy, mirroring what the settings
-	// screens write in production.
 	if err := seedViewer(ctx, pool, o); err != nil {
 		return nil, rollback(fmt.Errorf("seed viewer: %w", err))
 	}

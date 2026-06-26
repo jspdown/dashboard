@@ -1,8 +1,6 @@
 package pullrequest
 
 // Built-in defaults applied to a user who hasn't customized their review rules.
-// They match the values the YAML config used to default to, so a fresh deploy
-// behaves the same as before this became per-user.
 const (
 	DefaultRequiredReviewers  = 2
 	DefaultStaleAfterDays     = 5
