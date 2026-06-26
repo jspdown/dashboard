@@ -5,52 +5,38 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/jspdown/dashboard/api/pkg/pullrequest"
 )
 
-// seedViewer writes the viewer's repo subscriptions and review rules straight
-// into the database, the same rows the Repositories and Review rules settings
-// screens write in production. It backs the WithRepo/WithReview/WithFreshness
+// seedViewer writes the viewer's repo subscriptions and review rules the same
+// way production does, through pullrequest.UserStore, so the test seed can't
+// drift from the app's persistence. It backs the WithRepo/WithReview/WithFreshness
 // test options.
 func seedViewer(ctx context.Context, pool *pgxpool.Pool, o options) error {
+	store := pullrequest.NewUserStore(pool)
+
 	for _, repo := range o.repos {
-		if _, err := pool.Exec(ctx,
-			`INSERT INTO user_repos (user_login, repo) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			o.viewer, repo); err != nil {
+		if err := store.AddRepo(ctx, o.viewer, repo); err != nil {
 			return fmt.Errorf("seed repo %s: %w", repo, err)
 		}
 	}
 
-	ignore := o.review.IgnoreLabels
-	if ignore == nil {
-		ignore = []string{}
-	}
-	bots := o.review.BotAuthors
-	if bots == nil {
-		bots = []string{}
-	}
-	if _, err := pool.Exec(ctx, `
-INSERT INTO user_settings (
-    user_login, default_required_reviewers, stale_after_days, recently_merged_days,
-    ignore_labels, bot_authors
-) VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (user_login) DO UPDATE SET
-    default_required_reviewers = EXCLUDED.default_required_reviewers,
-    stale_after_days           = EXCLUDED.stale_after_days,
-    recently_merged_days       = EXCLUDED.recently_merged_days,
-    ignore_labels              = EXCLUDED.ignore_labels,
-    bot_authors                = EXCLUDED.bot_authors`,
-		o.viewer, o.review.DefaultRequiredReviewers, o.fresh.StaleAfterDays, o.fresh.RecentlyMergedDays,
-		ignore, bots); err != nil {
-		return fmt.Errorf("seed settings: %w", err)
+	overrides := make([]pullrequest.ReviewerOverride, len(o.review.ReviewerOverrides))
+	for i, ov := range o.review.ReviewerOverrides {
+		overrides[i] = pullrequest.ReviewerOverride{Label: ov.Label, Reviewers: ov.Reviewers}
 	}
 
-	for _, ov := range o.review.ReviewerOverrides {
-		if _, err := pool.Exec(ctx,
-			`INSERT INTO user_reviewer_overrides (user_login, label, reviewers) VALUES ($1, $2, $3)
-			 ON CONFLICT (user_login, label) DO UPDATE SET reviewers = EXCLUDED.reviewers`,
-			o.viewer, ov.Label, ov.Reviewers); err != nil {
-			return fmt.Errorf("seed override %s: %w", ov.Label, err)
-		}
+	settings := pullrequest.UserSettings{
+		DefaultRequiredReviewers: o.review.DefaultRequiredReviewers,
+		StaleAfterDays:           o.fresh.StaleAfterDays,
+		RecentlyMergedDays:       o.fresh.RecentlyMergedDays,
+		IgnoreLabels:             o.review.IgnoreLabels,
+		BotAuthors:               o.review.BotAuthors,
+		ReviewerOverrides:        overrides,
+	}
+	if err := store.SaveSettings(ctx, o.viewer, settings); err != nil {
+		return fmt.Errorf("seed settings: %w", err)
 	}
 	return nil
 }
