@@ -44,7 +44,7 @@ services:
     # image instead, point the override at it:
     #   make image
     #   DASHBOARD_IMAGE=dashboard:<tag> docker compose up
-    image: ${DASHBOARD_IMAGE:-ghcr.io/jspdown/dashboard:v0.1.0}
+    image: ${DASHBOARD_IMAGE:-ghcr.io/jspdown/dashboard:0.1.0}
     expose:
       - "8080"
     environment:
