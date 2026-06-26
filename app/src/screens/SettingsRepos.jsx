@@ -152,10 +152,6 @@ export default function SettingsRepos() {
     <SettingsShell tab="repos" ready={reposData !== undefined}>
       <div className="set-section">
         <AddRepoBar onAdded={refreshAll} />
-        <div className="set-hint mono">
-          <Icon name="git-branch" size={11} />
-          adding scopes your whole dashboard. removing hides a repo immediately · it keeps polling while teammates observe it.
-        </div>
       </div>
 
       <div className="set-section">
