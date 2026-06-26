@@ -200,6 +200,35 @@ func (b *Browser) FilterChips() []string {
 	return out
 }
 
+// SettingsRepoRow is the rendered state of one row on the Repositories settings
+// screen: the health dot's label and the stats cell text.
+type SettingsRepoRow struct {
+	Health string `json:"health"`
+	Stats  string `json:"stats"`
+}
+
+// SettingsRepoRows returns the observed-repo rows on the Repositories settings
+// screen, keyed by slug. Call after GotoSettings("/settings/repos"). Lets tests
+// assert that RepoOverview's health and open/needs counts reach the DOM.
+func (b *Browser) SettingsRepoRows() map[string]SettingsRepoRow {
+	b.t.Helper()
+	out := map[string]SettingsRepoRow{}
+	const js = `(() => {
+		const out = {};
+		document.querySelectorAll('.repo-row').forEach(row => {
+			const slug = row.querySelector('.rr-name .mono')?.textContent.trim() ?? '';
+			const health = row.querySelector('.rr-health .health')?.getAttribute('title') ?? '';
+			const stats = row.querySelector('.rr-stats')?.textContent.trim() ?? '';
+			if (slug) out[slug] = { health, stats };
+		});
+		return out;
+	})()`
+	if err := chromedp.Run(b.tabCtx, chromedp.Evaluate(js, &out)); err != nil {
+		b.t.Fatalf("e2e: SettingsRepoRows: %v", err)
+	}
+	return out
+}
+
 // QueryAttribute returns an attribute value on the first element matching
 // selector, or "" when nothing matches.
 func (b *Browser) QueryAttribute(selector, attr string) string {

@@ -265,6 +265,44 @@ func TestSettings_PutRules(t *testing.T) {
 	})
 }
 
+func TestSettings_RecheckRepo(t *testing.T) {
+	t.Run("regained access nudges the poller and returns 204", func(t *testing.T) {
+		poller := &fakeRepoPoller{}
+		h := newSettingsHandler(&fakeSettingsStore{}, &fakeOverview{}, &fakeVerifier{}, poller)
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/settings/repos/acme/widget/recheck", nil)
+		newSettingsRouter(h).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNoContent, rec.Code)
+		assert.Equal(t, 1, poller.nudges)
+	})
+
+	t.Run("still inaccessible returns 422 and does not nudge", func(t *testing.T) {
+		poller := &fakeRepoPoller{}
+		h := newSettingsHandler(&fakeSettingsStore{}, &fakeOverview{}, &fakeVerifier{err: ErrRepoInaccessible}, poller)
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/settings/repos/acme/widget/recheck", nil)
+		newSettingsRouter(h).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		assert.Equal(t, 0, poller.nudges)
+	})
+
+	t.Run("verifier outage returns 502 and does not nudge", func(t *testing.T) {
+		poller := &fakeRepoPoller{}
+		h := newSettingsHandler(&fakeSettingsStore{}, &fakeOverview{}, &fakeVerifier{err: errors.New("github down")}, poller)
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/settings/repos/acme/widget/recheck", nil)
+		newSettingsRouter(h).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusBadGateway, rec.Code)
+		assert.Equal(t, 0, poller.nudges)
+	})
+}
+
 func TestSettings_Suggestions(t *testing.T) {
 	store := &fakeSettingsStore{suggestions: []RepoSuggestion{{Repo: "acme/gadget", Observers: []string{"lou"}}}}
 	h := newSettingsHandler(store, &fakeOverview{}, &fakeVerifier{}, &fakeRepoPoller{})
