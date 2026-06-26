@@ -16,7 +16,7 @@ func TestNewClient_RejectsEmptyToken(t *testing.T) {
 		client, user, err := NewClient(context.Background(), token)
 		assert.Nil(t, client)
 		assert.Nil(t, user)
-		assert.ErrorContains(t, err, "empty")
+		assert.ErrorContains(t, err, "missing Github token")
 	}
 }
 

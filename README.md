@@ -1,5 +1,7 @@
 # Dashboard
 
+[![Container image](https://img.shields.io/badge/ghcr.io-jspdown%2Fdashboard-2188ff?logo=github)](https://github.com/jspdown/dashboard/pkgs/container/dashboard)
+
 A pull request dashboard. A Go API polls GitHub for the PRs you care about and serves a React frontend that groups them by what needs your attention: PRs waiting on your review, your own open PRs, and what merged recently.
 
 No webhooks, no GitHub App. A personal access token with `repo` scope is all it needs.
@@ -19,6 +21,25 @@ No webhooks, no GitHub App. A personal access token with `repo` scope is all it 
 - `api/` is a Go service (`dashboard serve`). It polls the GitHub REST and GraphQL APIs, stores PR state in Postgres, and serves both the JSON API and the bundled frontend on `:8080`.
 - `app/` is a React 19 + Vite frontend, built into the API image.
 - Authentication is delegated to a trusted-header proxy in front of the API (see [Authentication](#authentication)); the API itself runs no OAuth flow.
+
+## Container image
+
+Released images are published to the GitHub Container Registry at [`ghcr.io/jspdown/dashboard`](https://github.com/jspdown/dashboard/pkgs/container/dashboard) (`linux/amd64`). Each `vX.Y.Z` tag push publishes:
+
+| Tag            | Example       | Moves?                            |
+|----------------|---------------|-----------------------------------|
+| `X.Y.Z`        | `0.1.0`       | no, immutable release             |
+| `X.Y`          | `0.1`         | yes, newest patch of that minor   |
+| `latest`       | `latest`      | yes, newest release               |
+| `sha-<commit>` | `sha-e688982` | no, exact build                   |
+
+Pre-releases (`vX.Y.Z-rc1`) publish only the exact version and its `sha-` tag, no moving `X.Y` or `latest`.
+
+```bash
+docker pull ghcr.io/jspdown/dashboard:0.1.0
+```
+
+Pin an exact patch tag in production; the example stack does the same (see [`docker-compose.yml`](docker-compose.yml)).
 
 ## Quick start
 
