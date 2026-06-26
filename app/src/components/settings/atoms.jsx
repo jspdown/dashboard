@@ -1,6 +1,5 @@
 import { useState } from "react";
 
-import { useAuth } from "../../api/authContext.js";
 import Avatar from "../Avatar.jsx";
 import Icon from "../Icon.jsx";
 
@@ -101,7 +100,6 @@ const TABS = [
  * `ready` flips data-settings-ready once the screen's data has loaded, which the
  * e2e/screenshot harness waits on (mirrors the dashboard's data-prs-loaded). */
 export function SettingsShell({ tab, ready = true, children }) {
-  const auth = useAuth();
   return (
     <div className="settings" data-settings-ready={ready ? "true" : "false"}>
       <header className="set-head">
@@ -109,7 +107,6 @@ export function SettingsShell({ tab, ready = true, children }) {
           <div className="set-title">
             <Icon name="settings" size={15} />
             <h1>Settings</h1>
-            <span className="set-scope mono">personal to @{auth.login}</span>
           </div>
           <div className="set-saved mono"><span className="hdot success live" />changes apply instantly</div>
         </div>
