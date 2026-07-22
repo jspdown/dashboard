@@ -142,6 +142,22 @@ func ApprovalCount(latest map[string]Review) int {
 	return n
 }
 
+// ReviewerCount returns how many distinct reviewers have actually reviewed the
+// PR, meaning their latest verdict is an approval or a changes-requested. A
+// comment-only review is just a comment in a review envelope and a dismissed
+// review has had its verdict withdrawn, so neither counts toward a PR's
+// required-reviewer threshold. Pass the deduplicated map from
+// LatestReviewsByReviewer.
+func ReviewerCount(latest map[string]Review) int {
+	n := 0
+	for _, r := range latest {
+		if r.Verdict == VerdictApproved || r.Verdict == VerdictChangesRequested {
+			n++
+		}
+	}
+	return n
+}
+
 // MergeReadiness verdicts whether a PR can merge under our review policy
 // (the configured approval count, which GitHub branch protection doesn't
 // enforce for us). Precedence, highest first:
@@ -185,8 +201,9 @@ func MergeReadiness(draft bool, approvals, required int, ci string, latest map[s
 //  3. draft → ""
 //  4. ignore label → ""
 //  5. viewer already reviewed and not re-requested → GroupReviewed
-//  6. distinct reviewers < required → GroupRenovate if author is a configured
-//     bot, else GroupReview
+//  6. fewer reviewers with an approve/changes verdict than required →
+//     GroupRenovate if author is a configured bot, else GroupReview. A
+//     comment-only review is not a review decision, so it doesn't count.
 //  7. otherwise → ""
 //
 // A re-request (or a "commented" review that doesn't clear the request, see
@@ -211,7 +228,7 @@ func (r *Rules) ClassifyGroup(pr PullRequest, viewer string, latest map[string]R
 			return GroupReviewed
 		}
 	}
-	if len(latest) < required {
+	if ReviewerCount(latest) < required {
 		if slices.Contains(r.settings.BotAuthors, pr.Author) {
 			return GroupRenovate
 		}
