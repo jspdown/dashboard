@@ -207,6 +207,22 @@ func TestApprovalCount(t *testing.T) {
 	})
 }
 
+func TestReviewerCount(t *testing.T) {
+	t.Run("counts approvals and changes_requested, ignores comments and dismissals", func(t *testing.T) {
+		latest := map[string]Review{
+			"alex":  {Reviewer: "alex", Verdict: VerdictApproved},
+			"bob":   {Reviewer: "bob", Verdict: VerdictChangesRequested},
+			"carol": {Reviewer: "carol", Verdict: VerdictCommented},
+			"dana":  {Reviewer: "dana", Verdict: VerdictDismissed},
+		}
+		assert.Equal(t, 2, ReviewerCount(latest))
+	})
+
+	t.Run("empty map is zero", func(t *testing.T) {
+		assert.Equal(t, 0, ReviewerCount(nil))
+	})
+}
+
 func TestMergeReadiness(t *testing.T) {
 	// approvedBy builds a latest-review map of n distinct approvers.
 	approvedBy := func(n int) map[string]Review {
@@ -503,14 +519,40 @@ func TestClassifyGroup(t *testing.T) {
 			want:   "",
 		},
 		{
-			name:   "any verdict counts as a reviewer",
+			name:   "changes_requested counts as a reviewer",
+			pr:     openPR,
+			viewer: "alex",
+			latest: map[string]Review{
+				"bob":   approved("bob"),
+				"carol": {Reviewer: "carol", Verdict: "changes_requested", SubmittedAt: time.Now()},
+			},
+			want: "",
+		},
+		{
+			name:   "comment-only review doesn't satisfy the reviewer requirement",
 			pr:     openPR,
 			viewer: "alex",
 			latest: map[string]Review{
 				"bob":   {Reviewer: "bob", Verdict: "commented", SubmittedAt: time.Now()},
 				"carol": {Reviewer: "carol", Verdict: "changes_requested", SubmittedAt: time.Now()},
 			},
-			want: "",
+			want: GroupReview,
+		},
+		{
+			name:   "comment-only review doesn't meet a 1-reviewer policy",
+			pr:     openPR,
+			viewer: "alex",
+			labels: []string{"bot/light-review"},
+			latest: map[string]Review{"bob": {Reviewer: "bob", Verdict: "commented", SubmittedAt: time.Now()}},
+			want:   GroupReview,
+		},
+		{
+			name:   "dismissed review doesn't count toward the requirement",
+			pr:     openPR,
+			viewer: "alex",
+			labels: []string{"bot/light-review"},
+			latest: map[string]Review{"bob": {Reviewer: "bob", Verdict: "dismissed", SubmittedAt: time.Now()}},
+			want:   GroupReview,
 		},
 		{
 			name:   "renovate bot routes to renovate group",
