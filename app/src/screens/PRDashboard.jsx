@@ -2,7 +2,6 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 
 import styles from "./PRDashboard.module.css";
 import { useAuth } from "../api/authContext.js";
-import { useConfig } from "../api/configContext.js";
 import { getPRs, markPRViewed } from "../api/index.js";
 import { useApi } from "../api/useApi.js";
 import Avatar from "../components/Avatar.jsx";
@@ -12,34 +11,15 @@ import ReviewBadge from "../components/ReviewBadge.jsx";
 import StaleBadge from "../components/StaleBadge.jsx";
 import { stalenessBg, stalenessLabel } from "../components/staleness.js";
 
-// buildGroups returns the group definitions, weaving descriptions from
-// runtime config. Only "review" and "merged" vary with config; the rest
-// are fixed.
-function buildGroups(config) {
-  return [
-    { id: "mine",     label: "My open PRs",       icon: "pr",    headClass: "groupMine",     description: "Open PRs you authored." },
-    { id: "reviewed", label: "Reviewed by me",    icon: "check", headClass: "groupReviewed", description: "Open PRs you've already reviewed and aren't currently re-requested on." },
-    { id: "review",   label: "Needs my review",   icon: "alert", headClass: "groupReview",   description: reviewGroupDescription(config.review) },
-    { id: "renovate", label: "Renovate",          icon: "rerun", headClass: "groupRenovate", description: "Renovate dependency PRs awaiting review, separated from the main queue." },
-    { id: "merged",   label: "Recently merged",   icon: "merge", headClass: "groupMerged",   description: `PRs merged in the last ${config.recently_merged_days} days.` },
-  ];
-}
-
-// reviewGroupDescription builds the "Needs my review" tooltip from the
-// configured review policy, so the labels here match what the backend applies.
-function reviewGroupDescription(review) {
-  const sentences = ["Open non-draft PRs that still need your review."];
-  const clauses = [];
-  for (const label of review.ignore_labels ?? []) {
-    clauses.push(`${label} is skipped`);
-  }
-  for (const o of review.reviewer_overrides ?? []) {
-    const noun = o.reviewers === 1 ? "reviewer" : "reviewers";
-    clauses.push(`${o.label} needs ${o.reviewers} ${noun} instead of ${review.default_required_reviewers}`);
-  }
-  if (clauses.length > 0) sentences.push(clauses.join("; ") + ".");
-  return sentences.join(" ");
-}
+// GROUPS are the dashboard's fixed group definitions. Review rules vary per repo
+// (each repo resolves to a profile), so the descriptions stay policy-agnostic.
+const GROUPS = [
+  { id: "mine",     label: "My open PRs",       icon: "pr",    headClass: "groupMine",     description: "Open PRs you authored." },
+  { id: "reviewed", label: "Reviewed by me",    icon: "check", headClass: "groupReviewed", description: "Open PRs you've already reviewed and aren't currently re-requested on." },
+  { id: "review",   label: "Needs my review",   icon: "alert", headClass: "groupReview",   description: "Open non-draft PRs that still need your review." },
+  { id: "renovate", label: "Renovate",          icon: "rerun", headClass: "groupRenovate", description: "Renovate dependency PRs awaiting review, separated from the main queue." },
+  { id: "merged",   label: "Recently merged",   icon: "merge", headClass: "groupMerged",   description: "PRs you recently merged." },
+];
 
 const COLLAPSE_STORAGE_KEY = "dashboard:collapsedGroups";
 const DEFAULT_COLLAPSED_GROUPS = ["reviewed"];
@@ -110,8 +90,8 @@ function buildQueryMatcher(query) {
   return pr => checks.every(fn => fn(pr));
 }
 
-function PRRow({ pr, group, staleAfterDays, selected, rowRef, isUnread, onMarkViewed, onSelect }) {
-  const stale = pr.age >= staleAfterDays;
+function PRRow({ pr, group, selected, rowRef, isUnread, onMarkViewed, onSelect }) {
+  const stale = pr.stale;
   const isMerged = group === "merged";
   const isReviewed = group === "reviewed";
   function activate() {
@@ -162,7 +142,7 @@ function PRRow({ pr, group, staleAfterDays, selected, rowRef, isUnread, onMarkVi
             />
           ) : null}
           <span className={styles.tText}>{pr.title}</span>
-          {!isMerged && <StaleBadge age={pr.age} threshold={staleAfterDays} />}
+          {!isMerged && <StaleBadge stale={pr.stale} age={pr.age} />}
         </div>
         <div className={`${styles.prTitleMeta} mono`}>
           <span className={styles.repo}>{pr.repo}</span>
@@ -216,10 +196,8 @@ function PRRow({ pr, group, staleAfterDays, selected, rowRef, isUnread, onMarkVi
 }
 
 export default function PRDashboard() {
-  const config = useConfig();
   const auth = useAuth();
-  const groups = useMemo(() => buildGroups(config), [config]);
-  const staleAfterDays = config.stale_after_days;
+  const groups = GROUPS;
 
   const [filter, setFilter] = useState("all");
   const [sort, setSort]     = useState("priority");
@@ -389,7 +367,7 @@ export default function PRDashboard() {
             <span className="kbd">/</span>
           </div>
           <div className={styles.prChips}>
-            {["all", "needs review", `stale > ${staleAfterDays}d`, "ci failing"].map(c => (
+            {["all", "needs review", "stale", "ci failing"].map(c => (
               <button key={c} className={["chip", filter === c ? "active" : ""].join(" ")} onClick={() => setFilter(c)}>{c}</button>
             ))}
           </div>
@@ -453,7 +431,6 @@ export default function PRDashboard() {
                     key={pr.id}
                     pr={pr}
                     group={g.id}
-                    staleAfterDays={staleAfterDays}
                     selected={idx === selectedIndex}
                     rowRef={el => { rowRefs.current[idx] = el; }}
                     isUnread={isUnread(pr)}

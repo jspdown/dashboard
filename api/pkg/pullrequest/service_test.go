@@ -33,21 +33,13 @@ func TestMemoryService_List(t *testing.T) {
 			wantIDs:   []int{1, 2, 3, 4},
 		},
 		{
-			// Mock service uses stale_after_days=5, so chip and filter both read
-			// "stale > 5d". Of ages [1,2,0,4,4,8,6,1,0,3,2,1,2], only 8 and 6
-			// strictly exceed 5.
-			name:      "filter stale > 5d",
-			opts:      ListOpts{Filter: "stale > 5d"},
+			// Staleness is precomputed server-side per PR (PullRequestView.Stale)
+			// against each repo's own profile window, so the chip carries no
+			// threshold. Only fixtures 6 and 7 are flagged stale.
+			name:      "filter stale",
+			opts:      ListOpts{Filter: "stale"},
 			wantCount: 2,
 			wantIDs:   []int{6, 7},
-		},
-		{
-			// The threshold is config-driven, so a string that doesn't match
-			// the configured "stale > Nd" hits matchFilter's catch-all and
-			// returns everything.
-			name:      "filter stale with mismatched threshold falls back to all",
-			opts:      ListOpts{Filter: "stale > 3d"},
-			wantCount: 13,
 		},
 		{
 			name:      "filter ci failing",

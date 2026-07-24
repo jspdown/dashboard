@@ -7,24 +7,19 @@ import "context"
 // matchFilter/applySort against known expected IDs. Production has only
 // PostgresService.
 type memoryService struct {
-	prs            []PullRequestView
-	staleAfterDays int
+	prs []PullRequestView
 }
-
-// memoryStaleAfterDays is the in-memory service's staleness threshold. Matches
-// the production default.
-const memoryStaleAfterDays = 5
 
 func newMemoryService() *memoryService {
 	prs := make([]PullRequestView, len(fixtures))
 	copy(prs, fixtures)
-	return &memoryService{prs: prs, staleAfterDays: memoryStaleAfterDays}
+	return &memoryService{prs: prs}
 }
 
 func (s *memoryService) List(_ context.Context, opts ListOpts) ([]PullRequestView, error) {
 	out := make([]PullRequestView, 0, len(s.prs))
 	for _, pr := range s.prs {
-		if !matchFilter(pr, opts.Filter, s.staleAfterDays) {
+		if !matchFilter(pr, opts.Filter) {
 			continue
 		}
 		out = append(out, pr)

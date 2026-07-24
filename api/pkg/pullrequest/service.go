@@ -2,7 +2,6 @@ package pullrequest
 
 import (
 	"context"
-	"fmt"
 	"sort"
 )
 
@@ -11,17 +10,17 @@ type Service interface {
 	MarkViewed(ctx context.Context, githubID int64) error
 }
 
-// matchFilter applies the chip filter. The "stale > Nd" chip uses the
-// configured threshold, so we rebuild the same string here to match it exactly
-// rather than parsing it back out.
-func matchFilter(pr PullRequestView, filter string, staleAfterDays int) bool {
+// matchFilter applies the chip filter. Staleness is computed per PR against its
+// own profile's window (PullRequestView.Stale), so the "stale" chip carries no
+// global threshold.
+func matchFilter(pr PullRequestView, filter string) bool {
 	switch filter {
 	case "", "all":
 		return true
 	case "needs review":
 		return pr.Group == GroupReview
-	case fmt.Sprintf("stale > %dd", staleAfterDays):
-		return pr.Age > staleAfterDays
+	case "stale":
+		return pr.Stale
 	case "ci failing":
 		return pr.CI == CIFailing
 	default:

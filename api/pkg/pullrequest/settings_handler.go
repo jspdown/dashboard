@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -13,15 +14,17 @@ import (
 	"github.com/jspdown/dashboard/api/pkg/auth"
 )
 
-// SettingsStore stores user settings.
+// SettingsStore stores a user's repositories and rule profiles.
 type SettingsStore interface {
 	ListRepos(ctx context.Context, userLogin string) ([]string, error)
 	HasRepo(ctx context.Context, userLogin, repo string) (bool, error)
 	AddRepo(ctx context.Context, userLogin, repo string) error
 	RemoveRepo(ctx context.Context, userLogin, repo string) error
 	Suggestions(ctx context.Context, userLogin string) ([]RepoSuggestion, error)
-	GetSettings(ctx context.Context, userLogin string) (UserSettings, error)
-	SaveSettings(ctx context.Context, userLogin string, us UserSettings) error
+	ListProfiles(ctx context.Context, userLogin string) ([]RuleProfile, error)
+	CreateProfile(ctx context.Context, userLogin string, p RuleProfile) (RuleProfile, error)
+	UpdateProfile(ctx context.Context, userLogin string, p RuleProfile) error
+	DeleteProfile(ctx context.Context, userLogin string, id int64) error
 }
 
 // RepoOverviewer gives an overview of the repositories.
@@ -41,8 +44,7 @@ type RepoPoller interface {
 	Nudge()
 }
 
-// SettingsHandler serves the per-user Repositories and Review rules screens plus
-// the /config endpoint the dashboard reads at boot.
+// SettingsHandler serves the per-user Repositories and Review rules screens.
 type SettingsHandler struct {
 	store    SettingsStore
 	overview RepoOverviewer
@@ -56,54 +58,15 @@ func NewSettingsHandler(store SettingsStore, overview RepoOverviewer, verifier R
 }
 
 func (h *SettingsHandler) Routes(r chi.Router) {
-	r.Get("/config", h.config)
 	r.Get("/settings/repos", h.listRepos)
 	r.Post("/settings/repos", h.addRepo)
 	r.Get("/settings/repos/suggestions", h.suggestions)
 	r.Delete("/settings/repos/{owner}/{repo}", h.removeRepo)
 	r.Post("/settings/repos/{owner}/{repo}/recheck", h.recheckRepo)
-	r.Get("/settings/rules", h.getRules)
-	r.Put("/settings/rules", h.putRules)
-}
-
-// UIConfig is the per-user runtime config the dashboard reads at boot for group
-// descriptions, stale badges, and the merged-window tooltip.
-type UIConfig struct {
-	StaleAfterDays     int            `json:"stale_after_days"`
-	RecentlyMergedDays int            `json:"recently_merged_days"`
-	Review             UIReviewConfig `json:"review"`
-}
-
-type UIReviewConfig struct {
-	DefaultRequiredReviewers int                `json:"default_required_reviewers"`
-	IgnoreLabels             []string           `json:"ignore_labels"`
-	ReviewerOverrides        []ReviewerOverride `json:"reviewer_overrides"`
-}
-
-func uiConfigFromSettings(us UserSettings) UIConfig {
-	return UIConfig{
-		StaleAfterDays:     us.StaleAfterDays,
-		RecentlyMergedDays: us.RecentlyMergedDays,
-		Review: UIReviewConfig{
-			DefaultRequiredReviewers: us.DefaultRequiredReviewers,
-			IgnoreLabels:             nonNil(us.IgnoreLabels),
-			ReviewerOverrides:        us.ReviewerOverrides,
-		},
-	}
-}
-
-func (h *SettingsHandler) config(w http.ResponseWriter, r *http.Request) {
-	login, ok := h.viewer(w, r)
-	if !ok {
-		return
-	}
-	settings, err := h.store.GetSettings(r.Context(), login)
-	if err != nil {
-		h.logger.Error().Err(err).Msg("Get settings for config")
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, h.logger, http.StatusOK, uiConfigFromSettings(settings))
+	r.Get("/settings/profiles", h.listProfiles)
+	r.Post("/settings/profiles", h.createProfile)
+	r.Put("/settings/profiles/{id}", h.updateProfile)
+	r.Delete("/settings/profiles/{id}", h.deleteProfile)
 }
 
 func (h *SettingsHandler) listRepos(w http.ResponseWriter, r *http.Request) {
@@ -188,7 +151,7 @@ func (h *SettingsHandler) removeRepo(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	slug := chi.URLParam(r, "owner") + "/" + chi.URLParam(r, "repo")
+	slug := h.repoSlug(r)
 	if err := h.store.RemoveRepo(r.Context(), login, slug); err != nil {
 		h.logger.Error().Err(err).Str("repo", slug).Msg("Remove repo")
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -200,7 +163,7 @@ func (h *SettingsHandler) removeRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SettingsHandler) recheckRepo(w http.ResponseWriter, r *http.Request) {
-	slug := chi.URLParam(r, "owner") + "/" + chi.URLParam(r, "repo")
+	slug := h.repoSlug(r)
 	if err := h.verifier.Verify(r.Context(), slug); err != nil {
 		if errors.Is(err, ErrRepoInaccessible) {
 			http.Error(w, "still no access to "+slug, http.StatusUnprocessableEntity)
@@ -214,8 +177,14 @@ func (h *SettingsHandler) recheckRepo(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// RulesView is the wire shape of the Review rules screen: the editable knobs.
-type RulesView struct {
+// ProfileView is the wire shape of a rule profile: a named, self-contained
+// review policy scoped to a set of repos or, when all_repos is set, every
+// observed repo no specific profile claims.
+type ProfileView struct {
+	ID                       int64              `json:"id"`
+	Name                     string             `json:"name"`
+	AllRepos                 bool               `json:"all_repos"`
+	Repos                    []string           `json:"repos"`
 	DefaultRequiredReviewers int                `json:"default_required_reviewers"`
 	StaleAfterDays           int                `json:"stale_after_days"`
 	RecentlyMergedDays       int                `json:"recently_merged_days"`
@@ -224,93 +193,220 @@ type RulesView struct {
 	ReviewerOverrides        []ReviewerOverride `json:"reviewer_overrides"`
 }
 
-func rulesViewFromSettings(us UserSettings) RulesView {
-	return RulesView{
-		DefaultRequiredReviewers: us.DefaultRequiredReviewers,
-		StaleAfterDays:           us.StaleAfterDays,
-		RecentlyMergedDays:       us.RecentlyMergedDays,
-		IgnoreLabels:             nonNil(us.IgnoreLabels),
-		BotAuthors:               nonNil(us.BotAuthors),
-		ReviewerOverrides:        us.ReviewerOverrides,
+func profileView(p RuleProfile) ProfileView {
+	return ProfileView{
+		ID:                       p.ID,
+		Name:                     p.Name,
+		AllRepos:                 p.AllRepos,
+		Repos:                    nonNil(p.Repos),
+		DefaultRequiredReviewers: p.DefaultRequiredReviewers,
+		StaleAfterDays:           p.StaleAfterDays,
+		RecentlyMergedDays:       p.RecentlyMergedDays,
+		IgnoreLabels:             nonNil(p.IgnoreLabels),
+		BotAuthors:               nonNil(p.BotAuthors),
+		ReviewerOverrides:        nonNilOverrides(p.ReviewerOverrides),
 	}
 }
 
-func (h *SettingsHandler) getRules(w http.ResponseWriter, r *http.Request) {
+// profileViewToProfile validates a submitted profile and converts it to a
+// RuleProfile. Out-of-range values are rejected rather than clamped. An
+// all-repos profile carries no explicit repo list.
+func profileViewToProfile(v ProfileView) (RuleProfile, error) {
+	name := strings.TrimSpace(v.Name)
+	if name == "" {
+		return RuleProfile{}, errors.New("profile name is required")
+	}
+	if v.DefaultRequiredReviewers < 0 || v.DefaultRequiredReviewers > MaxRequiredReviewers {
+		return RuleProfile{}, errors.New("default_required_reviewers out of range")
+	}
+	if v.StaleAfterDays < MinDays || v.StaleAfterDays > MaxStaleAfterDays {
+		return RuleProfile{}, errors.New("stale_after_days out of range")
+	}
+	if v.RecentlyMergedDays < MinDays || v.RecentlyMergedDays > MaxRecentlyMergedDays {
+		return RuleProfile{}, errors.New("recently_merged_days out of range")
+	}
+
+	overrides, err := validateReviewerOverrides(v.ReviewerOverrides)
+	if err != nil {
+		return RuleProfile{}, err
+	}
+
+	var repos []string
+	if !v.AllRepos {
+		repos, err = validateRepos(v.Repos)
+		if err != nil {
+			return RuleProfile{}, err
+		}
+	}
+
+	return RuleProfile{
+		ID:       v.ID,
+		Name:     name,
+		AllRepos: v.AllRepos,
+		Repos:    repos,
+		ReviewSettings: ReviewSettings{
+			DefaultRequiredReviewers: v.DefaultRequiredReviewers,
+			StaleAfterDays:           v.StaleAfterDays,
+			RecentlyMergedDays:       v.RecentlyMergedDays,
+			IgnoreLabels:             cleanStrings(v.IgnoreLabels),
+			BotAuthors:               cleanStrings(v.BotAuthors),
+			ReviewerOverrides:        overrides,
+		},
+	}, nil
+}
+
+// validateRepos normalizes each owner/name slug and dedupes, preserving order.
+func validateRepos(in []string) ([]string, error) {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+	for _, raw := range in {
+		slug, err := normalizeRepoSlug(raw)
+		if err != nil {
+			return nil, err
+		}
+		if _, dup := seen[slug]; dup {
+			continue
+		}
+		seen[slug] = struct{}{}
+		out = append(out, slug)
+	}
+	return out, nil
+}
+
+func (h *SettingsHandler) listProfiles(w http.ResponseWriter, r *http.Request) {
 	login, ok := h.viewer(w, r)
 	if !ok {
 		return
 	}
-	settings, err := h.store.GetSettings(r.Context(), login)
+	profiles, err := h.store.ListProfiles(r.Context(), login)
 	if err != nil {
-		h.logger.Error().Err(err).Msg("Get rules")
+		h.logger.Error().Err(err).Msg("List profiles")
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, h.logger, http.StatusOK, rulesViewFromSettings(settings))
+	out := make([]ProfileView, len(profiles))
+	for i, p := range profiles {
+		out[i] = profileView(p)
+	}
+	writeJSON(w, h.logger, http.StatusOK, out)
 }
 
-func (h *SettingsHandler) putRules(w http.ResponseWriter, r *http.Request) {
+func (h *SettingsHandler) createProfile(w http.ResponseWriter, r *http.Request) {
 	login, ok := h.viewer(w, r)
 	if !ok {
 		return
 	}
-	var body RulesView
+	var body ProfileView
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	settings, err := rulesViewToSettings(body)
+	profile, err := profileViewToProfile(body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := h.store.SaveSettings(r.Context(), login, settings); err != nil {
-		h.logger.Error().Err(err).Msg("Save rules")
-		http.Error(w, "internal error", http.StatusInternalServerError)
+	created, err := h.store.CreateProfile(r.Context(), login, profile)
+	if err != nil {
+		h.writeProfileError(w, err, "Create profile")
 		return
 	}
-	writeJSON(w, h.logger, http.StatusOK, rulesViewFromSettings(settings))
+	writeJSON(w, h.logger, http.StatusCreated, profileView(created))
 }
 
-// rulesViewToSettings validates the submitted rules and converts them to a
-// UserSettings. It clamps nothing silently: out-of-range values are rejected so
-// the client and server agree on what was saved.
-func rulesViewToSettings(v RulesView) (UserSettings, error) {
-	if v.DefaultRequiredReviewers < 0 || v.DefaultRequiredReviewers > MaxRequiredReviewers {
-		return UserSettings{}, errors.New("default_required_reviewers out of range")
+func (h *SettingsHandler) updateProfile(w http.ResponseWriter, r *http.Request) {
+	login, ok := h.viewer(w, r)
+	if !ok {
+		return
 	}
-	if v.StaleAfterDays < MinDays || v.StaleAfterDays > MaxStaleAfterDays {
-		return UserSettings{}, errors.New("stale_after_days out of range")
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid profile id", http.StatusBadRequest)
+		return
 	}
-	if v.RecentlyMergedDays < MinDays || v.RecentlyMergedDays > MaxRecentlyMergedDays {
-		return UserSettings{}, errors.New("recently_merged_days out of range")
+	var body ProfileView
+	if err = json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
 	}
+	profile, err := profileViewToProfile(body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	profile.ID = id
+	if err := h.store.UpdateProfile(r.Context(), login, profile); err != nil {
+		h.writeProfileError(w, err, "Update profile")
+		return
+	}
+	writeJSON(w, h.logger, http.StatusOK, profileView(profile))
+}
 
-	overrides := make([]ReviewerOverride, 0, len(v.ReviewerOverrides))
-	seen := make(map[string]struct{}, len(v.ReviewerOverrides))
-	for _, o := range v.ReviewerOverrides {
+func (h *SettingsHandler) deleteProfile(w http.ResponseWriter, r *http.Request) {
+	login, ok := h.viewer(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid profile id", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.DeleteProfile(r.Context(), login, id); err != nil {
+		h.writeProfileError(w, err, "Delete profile")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// writeProfileError maps the profile store's sentinel errors to client statuses
+// and logs anything unexpected as a 500.
+func (h *SettingsHandler) writeProfileError(w http.ResponseWriter, err error, msg string) {
+	switch {
+	case errors.Is(err, ErrProfileNotFound):
+		http.Error(w, "profile not found", http.StatusNotFound)
+	case errors.Is(err, ErrDuplicateCatchAll):
+		http.Error(w, "an all-repositories profile already exists", http.StatusConflict)
+	case errors.Is(err, ErrRepoProfileConflict):
+		http.Error(w, "a repository is already in another profile", http.StatusConflict)
+	default:
+		h.logger.Error().Err(err).Msg(msg)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
+}
+
+// validateReviewerOverrides trims labels, rejects blanks and out-of-range
+// counts, and dedupes by label preserving order.
+func validateReviewerOverrides(in []ReviewerOverride) ([]ReviewerOverride, error) {
+	out := make([]ReviewerOverride, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+	for _, o := range in {
 		label := strings.TrimSpace(o.Label)
 		if label == "" {
-			return UserSettings{}, errors.New("reviewer override label is required")
+			return nil, errors.New("reviewer override label is required")
 		}
 		if o.Reviewers < 0 || o.Reviewers > MaxRequiredReviewers {
-			return UserSettings{}, errors.New("reviewer override count out of range")
+			return nil, errors.New("reviewer override count out of range")
 		}
 		if _, dup := seen[label]; dup {
 			continue
 		}
 		seen[label] = struct{}{}
-		overrides = append(overrides, ReviewerOverride{Label: label, Reviewers: o.Reviewers})
+		out = append(out, ReviewerOverride{Label: label, Reviewers: o.Reviewers})
 	}
+	return out, nil
+}
 
-	return UserSettings{
-		DefaultRequiredReviewers: v.DefaultRequiredReviewers,
-		StaleAfterDays:           v.StaleAfterDays,
-		RecentlyMergedDays:       v.RecentlyMergedDays,
-		IgnoreLabels:             cleanStrings(v.IgnoreLabels),
-		BotAuthors:               cleanStrings(v.BotAuthors),
-		ReviewerOverrides:        overrides,
-	}, nil
+func (h *SettingsHandler) repoSlug(r *http.Request) string {
+	return chi.URLParam(r, "owner") + "/" + chi.URLParam(r, "repo")
+}
+
+// nonNilOverrides returns an empty slice for nil so JSON encodes "[]".
+func nonNilOverrides(in []ReviewerOverride) []ReviewerOverride {
+	if in == nil {
+		return []ReviewerOverride{}
+	}
+	return in
 }
 
 // normalizeRepoSlug trims and validates an owner/name slug.

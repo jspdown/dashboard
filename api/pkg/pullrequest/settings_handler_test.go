@@ -21,11 +21,17 @@ type fakeSettingsStore struct {
 	repos       []string
 	has         bool
 	suggestions []RepoSuggestion
-	settings    UserSettings
+	profiles    []RuleProfile
+
+	createErr error
+	updateErr error
+	deleteErr error
 
 	added   []string
 	removed []string
-	saved   *UserSettings
+	created *RuleProfile
+	updated *RuleProfile
+	deleted []int64
 }
 
 func (f *fakeSettingsStore) ListRepos(context.Context, string) ([]string, error) { return f.repos, nil }
@@ -43,11 +49,29 @@ func (f *fakeSettingsStore) RemoveRepo(_ context.Context, _ string, repo string)
 func (f *fakeSettingsStore) Suggestions(context.Context, string) ([]RepoSuggestion, error) {
 	return f.suggestions, nil
 }
-func (f *fakeSettingsStore) GetSettings(context.Context, string) (UserSettings, error) {
-	return f.settings, nil
+func (f *fakeSettingsStore) ListProfiles(context.Context, string) ([]RuleProfile, error) {
+	return f.profiles, nil
 }
-func (f *fakeSettingsStore) SaveSettings(_ context.Context, _ string, us UserSettings) error {
-	f.saved = &us
+func (f *fakeSettingsStore) CreateProfile(_ context.Context, _ string, p RuleProfile) (RuleProfile, error) {
+	if f.createErr != nil {
+		return RuleProfile{}, f.createErr
+	}
+	f.created = &p
+	p.ID = 1
+	return p, nil
+}
+func (f *fakeSettingsStore) UpdateProfile(_ context.Context, _ string, p RuleProfile) error {
+	if f.updateErr != nil {
+		return f.updateErr
+	}
+	f.updated = &p
+	return nil
+}
+func (f *fakeSettingsStore) DeleteProfile(_ context.Context, _ string, id int64) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	f.deleted = append(f.deleted, id)
 	return nil
 }
 
@@ -85,31 +109,8 @@ func newSettingsHandler(store SettingsStore, overview RepoOverviewer, verifier R
 	return NewSettingsHandler(store, overview, verifier, poller, zerolog.Nop())
 }
 
-func TestSettings_Config(t *testing.T) {
-	store := &fakeSettingsStore{settings: UserSettings{
-		DefaultRequiredReviewers: 3,
-		StaleAfterDays:           4,
-		RecentlyMergedDays:       9,
-		IgnoreLabels:             []string{"wip"},
-		ReviewerOverrides:        []ReviewerOverride{{Label: "hotfix", Reviewers: 1}},
-	}}
-	h := newSettingsHandler(store, &fakeOverview{}, &fakeVerifier{}, &fakeRepoPoller{})
-
-	rec := httptest.NewRecorder()
-	newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/config", nil))
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	var got UIConfig
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
-	assert.Equal(t, 4, got.StaleAfterDays)
-	assert.Equal(t, 9, got.RecentlyMergedDays)
-	assert.Equal(t, 3, got.Review.DefaultRequiredReviewers)
-	assert.Equal(t, []string{"wip"}, got.Review.IgnoreLabels)
-	assert.Equal(t, []ReviewerOverride{{Label: "hotfix", Reviewers: 1}}, got.Review.ReviewerOverrides)
-}
-
 func TestSettings_ListRepos(t *testing.T) {
-	overview := &fakeOverview{repos: []RepoView{{Repo: "acme/widget", Health: RepoHealthOK, Open: 3, Needs: 1}}}
+	overview := &fakeOverview{repos: []RepoView{{Repo: "acme/widget", Health: RepoHealthOK, Profile: "Strict"}}}
 	h := newSettingsHandler(&fakeSettingsStore{}, overview, &fakeVerifier{}, &fakeRepoPoller{})
 
 	rec := httptest.NewRecorder()
@@ -121,6 +122,7 @@ func TestSettings_ListRepos(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, "acme/widget", got[0].Repo)
 	assert.Equal(t, RepoHealthOK, got[0].Health)
+	assert.Equal(t, "Strict", got[0].Profile)
 }
 
 func TestSettings_AddRepo(t *testing.T) {
@@ -201,67 +203,198 @@ func TestSettings_RemoveRepo(t *testing.T) {
 	assert.Equal(t, 1, poller.nudges)
 }
 
-func TestSettings_GetRules(t *testing.T) {
-	store := &fakeSettingsStore{settings: UserSettings{
-		DefaultRequiredReviewers: 2,
-		StaleAfterDays:           3,
-		RecentlyMergedDays:       7,
-		BotAuthors:               []string{"renovate[bot]"},
+func TestSettings_ListProfiles(t *testing.T) {
+	store := &fakeSettingsStore{profiles: []RuleProfile{
+		{ID: 7, Name: "Strict", Repos: []string{"acme/widget"}, ReviewSettings: ReviewSettings{
+			DefaultRequiredReviewers: 3, StaleAfterDays: 4, RecentlyMergedDays: 9,
+		}},
 	}}
 	h := newSettingsHandler(store, &fakeOverview{}, &fakeVerifier{}, &fakeRepoPoller{})
 
 	rec := httptest.NewRecorder()
-	newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/rules", nil))
+	newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/profiles", nil))
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	var got RulesView
+	var got []ProfileView
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
-	assert.Equal(t, 2, got.DefaultRequiredReviewers)
-	assert.Equal(t, 3, got.StaleAfterDays)
-	assert.Equal(t, []string{"renovate[bot]"}, got.BotAuthors)
+	require.Len(t, got, 1)
+	assert.Equal(t, int64(7), got[0].ID)
+	assert.Equal(t, "Strict", got[0].Name)
+	assert.Equal(t, []string{"acme/widget"}, got[0].Repos)
+	assert.Equal(t, 3, got[0].DefaultRequiredReviewers)
+	// nil slices encode as [] for the client.
+	assert.Equal(t, []ReviewerOverride{}, got[0].ReviewerOverrides)
+	assert.Equal(t, []string{}, got[0].BotAuthors)
 }
 
-func TestSettings_PutRules(t *testing.T) {
-	t.Run("valid rules are saved and echoed back", func(t *testing.T) {
+func TestSettings_CreateProfile(t *testing.T) {
+	const valid = `{"name":"Strict","all_repos":false,"repos":["acme/widget","acme/widget"],
+		"default_required_reviewers":3,"stale_after_days":4,"recently_merged_days":9,
+		"ignore_labels":["wip","wip"," "],"bot_authors":["renovate[bot]"],
+		"reviewer_overrides":[{"label":"hotfix","reviewers":1}]}`
+
+	t.Run("valid profile is cleaned, saved, and echoed with an id", func(t *testing.T) {
 		store := &fakeSettingsStore{}
 		h := newSettingsHandler(store, &fakeOverview{}, &fakeVerifier{}, &fakeRepoPoller{})
 
-		body := `{"default_required_reviewers":2,"stale_after_days":3,"recently_merged_days":7,
-			"ignore_labels":["wip","wip"," "],"bot_authors":["renovate[bot]"],
-			"reviewer_overrides":[{"label":"hotfix","reviewers":1}]}`
 		rec := httptest.NewRecorder()
-		newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/settings/rules", strings.NewReader(body)))
+		newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/settings/profiles", strings.NewReader(valid)))
 
-		require.Equal(t, http.StatusOK, rec.Code)
-		require.NotNil(t, store.saved)
-		// Duplicate and blank ignore labels are cleaned before persisting.
-		assert.Equal(t, []string{"wip"}, store.saved.IgnoreLabels)
-		assert.Equal(t, []ReviewerOverride{{Label: "hotfix", Reviewers: 1}}, store.saved.ReviewerOverrides)
+		require.Equal(t, http.StatusCreated, rec.Code)
+		require.NotNil(t, store.created)
+		// Duplicate repos and blank/duplicate labels are cleaned before persisting.
+		assert.Equal(t, []string{"acme/widget"}, store.created.Repos)
+		assert.Equal(t, []string{"wip"}, store.created.IgnoreLabels)
+		assert.Equal(t, []ReviewerOverride{{Label: "hotfix", Reviewers: 1}}, store.created.ReviewerOverrides)
+
+		var got ProfileView
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		assert.Equal(t, int64(1), got.ID)
+	})
+
+	t.Run("all-repos profile drops any submitted repo list", func(t *testing.T) {
+		store := &fakeSettingsStore{}
+		h := newSettingsHandler(store, &fakeOverview{}, &fakeVerifier{}, &fakeRepoPoller{})
+
+		body := `{"name":"Everything","all_repos":true,"repos":["acme/widget"],
+			"default_required_reviewers":2,"stale_after_days":5,"recently_merged_days":7}`
+		rec := httptest.NewRecorder()
+		newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/settings/profiles", strings.NewReader(body)))
+
+		require.Equal(t, http.StatusCreated, rec.Code)
+		require.NotNil(t, store.created)
+		assert.True(t, store.created.AllRepos)
+		assert.Empty(t, store.created.Repos)
+	})
+
+	t.Run("missing name is rejected", func(t *testing.T) {
+		store := &fakeSettingsStore{}
+		h := newSettingsHandler(store, &fakeOverview{}, &fakeVerifier{}, &fakeRepoPoller{})
+
+		body := `{"name":"  ","default_required_reviewers":2,"stale_after_days":5,"recently_merged_days":7}`
+		rec := httptest.NewRecorder()
+		newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/settings/profiles", strings.NewReader(body)))
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Nil(t, store.created)
 	})
 
 	t.Run("out-of-range stale window is rejected", func(t *testing.T) {
 		store := &fakeSettingsStore{}
 		h := newSettingsHandler(store, &fakeOverview{}, &fakeVerifier{}, &fakeRepoPoller{})
 
-		body := `{"default_required_reviewers":2,"stale_after_days":999,"recently_merged_days":7}`
+		body := `{"name":"X","default_required_reviewers":2,"stale_after_days":999,"recently_merged_days":7}`
 		rec := httptest.NewRecorder()
-		newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/settings/rules", strings.NewReader(body)))
+		newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/settings/profiles", strings.NewReader(body)))
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
-		assert.Nil(t, store.saved)
+		assert.Nil(t, store.created)
 	})
 
-	t.Run("override with blank label is rejected", func(t *testing.T) {
+	t.Run("malformed repo slug is rejected", func(t *testing.T) {
 		store := &fakeSettingsStore{}
 		h := newSettingsHandler(store, &fakeOverview{}, &fakeVerifier{}, &fakeRepoPoller{})
 
-		body := `{"default_required_reviewers":2,"stale_after_days":3,"recently_merged_days":7,
-			"reviewer_overrides":[{"label":"  ","reviewers":1}]}`
+		body := `{"name":"X","repos":["nopath"],"default_required_reviewers":2,"stale_after_days":5,"recently_merged_days":7}`
 		rec := httptest.NewRecorder()
-		newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/settings/rules", strings.NewReader(body)))
+		newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/settings/profiles", strings.NewReader(body)))
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
-		assert.Nil(t, store.saved)
+		assert.Nil(t, store.created)
+	})
+
+	t.Run("duplicate catch-all surfaces as 409", func(t *testing.T) {
+		store := &fakeSettingsStore{createErr: ErrDuplicateCatchAll}
+		h := newSettingsHandler(store, &fakeOverview{}, &fakeVerifier{}, &fakeRepoPoller{})
+
+		body := `{"name":"Everything","all_repos":true,"default_required_reviewers":2,"stale_after_days":5,"recently_merged_days":7}`
+		rec := httptest.NewRecorder()
+		newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/settings/profiles", strings.NewReader(body)))
+
+		assert.Equal(t, http.StatusConflict, rec.Code)
+	})
+
+	t.Run("repo already in another profile surfaces as 409", func(t *testing.T) {
+		store := &fakeSettingsStore{createErr: ErrRepoProfileConflict}
+		h := newSettingsHandler(store, &fakeOverview{}, &fakeVerifier{}, &fakeRepoPoller{})
+
+		body := `{"name":"Strict","repos":["acme/widget"],"default_required_reviewers":2,"stale_after_days":5,"recently_merged_days":7}`
+		rec := httptest.NewRecorder()
+		newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/settings/profiles", strings.NewReader(body)))
+
+		assert.Equal(t, http.StatusConflict, rec.Code)
+	})
+}
+
+func TestSettings_UpdateProfile(t *testing.T) {
+	const valid = `{"name":"Strict","repos":["acme/widget"],
+		"default_required_reviewers":3,"stale_after_days":4,"recently_merged_days":9}`
+
+	t.Run("valid update is saved against the path id", func(t *testing.T) {
+		store := &fakeSettingsStore{}
+		h := newSettingsHandler(store, &fakeOverview{}, &fakeVerifier{}, &fakeRepoPoller{})
+
+		rec := httptest.NewRecorder()
+		newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/settings/profiles/42", strings.NewReader(valid)))
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.NotNil(t, store.updated)
+		assert.Equal(t, int64(42), store.updated.ID)
+		assert.Equal(t, "Strict", store.updated.Name)
+	})
+
+	t.Run("non-numeric id is rejected", func(t *testing.T) {
+		store := &fakeSettingsStore{}
+		h := newSettingsHandler(store, &fakeOverview{}, &fakeVerifier{}, &fakeRepoPoller{})
+
+		rec := httptest.NewRecorder()
+		newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/settings/profiles/abc", strings.NewReader(valid)))
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Nil(t, store.updated)
+	})
+
+	t.Run("unknown profile returns 404", func(t *testing.T) {
+		store := &fakeSettingsStore{updateErr: ErrProfileNotFound}
+		h := newSettingsHandler(store, &fakeOverview{}, &fakeVerifier{}, &fakeRepoPoller{})
+
+		rec := httptest.NewRecorder()
+		newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/settings/profiles/99", strings.NewReader(valid)))
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("repo conflict returns 409", func(t *testing.T) {
+		store := &fakeSettingsStore{updateErr: ErrRepoProfileConflict}
+		h := newSettingsHandler(store, &fakeOverview{}, &fakeVerifier{}, &fakeRepoPoller{})
+
+		rec := httptest.NewRecorder()
+		newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/settings/profiles/99", strings.NewReader(valid)))
+
+		assert.Equal(t, http.StatusConflict, rec.Code)
+	})
+}
+
+func TestSettings_DeleteProfile(t *testing.T) {
+	t.Run("known profile is deleted", func(t *testing.T) {
+		store := &fakeSettingsStore{}
+		h := newSettingsHandler(store, &fakeOverview{}, &fakeVerifier{}, &fakeRepoPoller{})
+
+		rec := httptest.NewRecorder()
+		newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/settings/profiles/5", nil))
+
+		assert.Equal(t, http.StatusNoContent, rec.Code)
+		assert.Equal(t, []int64{5}, store.deleted)
+	})
+
+	t.Run("unknown profile returns 404", func(t *testing.T) {
+		store := &fakeSettingsStore{deleteErr: ErrProfileNotFound}
+		h := newSettingsHandler(store, &fakeOverview{}, &fakeVerifier{}, &fakeRepoPoller{})
+
+		rec := httptest.NewRecorder()
+		newSettingsRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/settings/profiles/5", nil))
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
 }
 

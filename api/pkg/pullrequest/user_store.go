@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/jspdown/dashboard/api/pkg/postgres"
@@ -184,7 +185,23 @@ ON CONFLICT (repo) DO UPDATE SET last_polled_at = now(), last_error = EXCLUDED.l
 	return nil
 }
 
-type userSettingsRow struct {
+// Errors the profile store returns for the unique constraints, which the
+// settings handler maps to a 409.
+var (
+	// ErrDuplicateCatchAll means the user already has an "all repositories"
+	// profile (one catch-all per user).
+	ErrDuplicateCatchAll = errors.New("an all-repositories profile already exists")
+	// ErrRepoProfileConflict means a repo is already claimed by another specific
+	// profile (one specific profile per repo).
+	ErrRepoProfileConflict = errors.New("a repository is already in another profile")
+	// ErrProfileNotFound means no profile with that id belongs to the user.
+	ErrProfileNotFound = errors.New("profile not found")
+)
+
+type ruleProfileRow struct {
+	ID                       int64    `db:"id"`
+	Name                     string   `db:"name"`
+	AllRepos                 bool     `db:"all_repos"`
 	DefaultRequiredReviewers int      `db:"default_required_reviewers"`
 	StaleAfterDays           int      `db:"stale_after_days"`
 	RecentlyMergedDays       int      `db:"recently_merged_days"`
@@ -192,85 +209,201 @@ type userSettingsRow struct {
 	BotAuthors               []string `db:"bot_authors"`
 }
 
-type reviewerOverrideRow struct {
+type profileRepoRow struct {
+	ProfileID int64  `db:"profile_id"`
+	Repo      string `db:"repo"`
+}
+
+type profileOverrideRow struct {
+	ProfileID int64  `db:"profile_id"`
 	Label     string `db:"label"`
 	Reviewers int    `db:"reviewers"`
 }
 
-// GetSettings returns the user's review rules, falling back to the built-in
-// defaults when they've never saved any. Reviewer overrides are loaded
-// separately and attached.
-func (s *UserStore) GetSettings(ctx context.Context, userLogin string) (UserSettings, error) {
-	settings := DefaultUserSettings()
-
-	row, err := postgres.QueryOne(ctx, s.pool,
-		`SELECT default_required_reviewers, stale_after_days, recently_merged_days,
-		        ignore_labels, bot_authors
-		 FROM user_settings WHERE user_login = $1`,
-		[]any{userLogin}, pgx.RowToStructByName[userSettingsRow])
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		// Keep defaults; a user may still have overrides without a settings row
-		// in theory, so fall through to load them.
-	case err != nil:
-		return UserSettings{}, fmt.Errorf("getting user settings: %w", err)
-	default:
-		settings.DefaultRequiredReviewers = row.DefaultRequiredReviewers
-		settings.StaleAfterDays = row.StaleAfterDays
-		settings.RecentlyMergedDays = row.RecentlyMergedDays
-		settings.IgnoreLabels = nonNil(row.IgnoreLabels)
-		settings.BotAuthors = nonNil(row.BotAuthors)
-	}
-
-	overrides, err := postgres.QueryMany(ctx, s.pool,
-		`SELECT label, reviewers FROM user_reviewer_overrides WHERE user_login = $1 ORDER BY label`,
-		[]any{userLogin}, pgx.RowToStructByName[reviewerOverrideRow])
+// ListProfiles returns the user's rule profiles in display order, each with its
+// targeted repos and reviewer overrides stitched on. It runs one query per
+// child table so List can resolve every repo without a query per profile.
+func (s *UserStore) ListProfiles(ctx context.Context, userLogin string) ([]RuleProfile, error) {
+	rows, err := postgres.QueryMany(ctx, s.pool,
+		`SELECT id, name, all_repos, default_required_reviewers, stale_after_days,
+		        recently_merged_days, ignore_labels, bot_authors
+		 FROM user_rule_profiles WHERE user_login = $1 ORDER BY position, id`,
+		[]any{userLogin}, pgx.RowToStructByName[ruleProfileRow])
 	if err != nil {
-		return UserSettings{}, fmt.Errorf("getting reviewer overrides: %w", err)
+		return nil, fmt.Errorf("listing rule profiles: %w", err)
 	}
-	settings.ReviewerOverrides = make([]ReviewerOverride, len(overrides))
-	for i, o := range overrides {
-		settings.ReviewerOverrides[i] = ReviewerOverride(o)
+
+	profiles := make([]RuleProfile, len(rows))
+	byID := make(map[int64]*RuleProfile, len(rows))
+	for i, r := range rows {
+		profiles[i] = RuleProfile{
+			ID:       r.ID,
+			Name:     r.Name,
+			AllRepos: r.AllRepos,
+			Repos:    []string{},
+			ReviewSettings: ReviewSettings{
+				DefaultRequiredReviewers: r.DefaultRequiredReviewers,
+				StaleAfterDays:           r.StaleAfterDays,
+				RecentlyMergedDays:       r.RecentlyMergedDays,
+				IgnoreLabels:             nonNil(r.IgnoreLabels),
+				BotAuthors:               nonNil(r.BotAuthors),
+				ReviewerOverrides:        []ReviewerOverride{},
+			},
+		}
+		byID[r.ID] = &profiles[i]
 	}
-	return settings, nil
+
+	repoRows, err := postgres.QueryMany(ctx, s.pool,
+		`SELECT profile_id, repo FROM user_rule_profile_repos
+		 WHERE user_login = $1 ORDER BY repo`,
+		[]any{userLogin}, pgx.RowToStructByName[profileRepoRow])
+	if err != nil {
+		return nil, fmt.Errorf("listing profile repos: %w", err)
+	}
+	for _, rr := range repoRows {
+		if p := byID[rr.ProfileID]; p != nil {
+			p.Repos = append(p.Repos, rr.Repo)
+		}
+	}
+
+	ovRows, err := postgres.QueryMany(ctx, s.pool,
+		`SELECT o.profile_id, o.label, o.reviewers
+		 FROM user_rule_profile_reviewer_overrides o
+		 JOIN user_rule_profiles p ON p.id = o.profile_id
+		 WHERE p.user_login = $1 ORDER BY o.label`,
+		[]any{userLogin}, pgx.RowToStructByName[profileOverrideRow])
+	if err != nil {
+		return nil, fmt.Errorf("listing profile reviewer overrides: %w", err)
+	}
+	for _, o := range ovRows {
+		if p := byID[o.ProfileID]; p != nil {
+			p.ReviewerOverrides = append(p.ReviewerOverrides, ReviewerOverride{Label: o.Label, Reviewers: o.Reviewers})
+		}
+	}
+	return profiles, nil
 }
 
-// SaveSettings replaces the user's review rules wholesale in one transaction:
-// the scalar/array settings row plus the full set of reviewer overrides.
-func (s *UserStore) SaveSettings(ctx context.Context, userLogin string, us UserSettings) error {
-	return postgres.BeginTxFunc(ctx, s.pool, pgx.TxOptions{}, func(ctx context.Context) error {
-		if _, err := postgres.Exec(ctx, s.pool, `
-INSERT INTO user_settings (
-    user_login, default_required_reviewers, stale_after_days, recently_merged_days,
-    ignore_labels, bot_authors, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, now())
-ON CONFLICT (user_login) DO UPDATE SET
-    default_required_reviewers = EXCLUDED.default_required_reviewers,
-    stale_after_days           = EXCLUDED.stale_after_days,
-    recently_merged_days       = EXCLUDED.recently_merged_days,
-    ignore_labels              = EXCLUDED.ignore_labels,
-    bot_authors                = EXCLUDED.bot_authors,
-    updated_at                 = now()`,
-			[]any{userLogin, us.DefaultRequiredReviewers, us.StaleAfterDays, us.RecentlyMergedDays,
-				nonNil(us.IgnoreLabels), nonNil(us.BotAuthors)}); err != nil {
-			return fmt.Errorf("upserting user settings: %w", err)
+// CreateProfile inserts a new profile with its repos and overrides in one
+// transaction and returns it with the assigned id. A duplicate catch-all or a
+// repo already in another profile surfaces as ErrDuplicateCatchAll /
+// ErrRepoProfileConflict.
+func (s *UserStore) CreateProfile(ctx context.Context, userLogin string, p RuleProfile) (RuleProfile, error) {
+	err := postgres.BeginTxFunc(ctx, s.pool, pgx.TxOptions{}, func(ctx context.Context) error {
+		if err := postgres.QueryRow(ctx, s.pool, `
+INSERT INTO user_rule_profiles (
+    user_login, name, all_repos, default_required_reviewers, stale_after_days,
+    recently_merged_days, ignore_labels, bot_authors, position, updated_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8,
+    COALESCE((SELECT max(position) + 1 FROM user_rule_profiles WHERE user_login = $1), 0),
+    now()
+) RETURNING id`,
+			[]any{userLogin, p.Name, p.AllRepos, p.DefaultRequiredReviewers, p.StaleAfterDays,
+				p.RecentlyMergedDays, nonNil(p.IgnoreLabels), nonNil(p.BotAuthors)},
+		).Scan(&p.ID); err != nil {
+			return fmt.Errorf("inserting rule profile: %w", err)
 		}
+		return s.writeProfileChildren(ctx, userLogin, p)
+	})
+	if err != nil {
+		return RuleProfile{}, mapProfileConflict(err)
+	}
+	return p, nil
+}
 
-		if _, err := postgres.Exec(ctx, s.pool,
-			`DELETE FROM user_reviewer_overrides WHERE user_login = $1`,
-			[]any{userLogin}); err != nil {
-			return fmt.Errorf("clearing reviewer overrides: %w", err)
+// UpdateProfile replaces an existing profile's fields, repos, and overrides in
+// one transaction. It returns ErrProfileNotFound if the id isn't the user's.
+func (s *UserStore) UpdateProfile(ctx context.Context, userLogin string, p RuleProfile) error {
+	err := postgres.BeginTxFunc(ctx, s.pool, pgx.TxOptions{}, func(ctx context.Context) error {
+		tag, err := postgres.Exec(ctx, s.pool, `
+UPDATE user_rule_profiles SET
+    name                       = $3,
+    all_repos                  = $4,
+    default_required_reviewers = $5,
+    stale_after_days           = $6,
+    recently_merged_days       = $7,
+    ignore_labels              = $8,
+    bot_authors                = $9,
+    updated_at                 = now()
+WHERE id = $1 AND user_login = $2`,
+			[]any{p.ID, userLogin, p.Name, p.AllRepos, p.DefaultRequiredReviewers,
+				p.StaleAfterDays, p.RecentlyMergedDays, nonNil(p.IgnoreLabels), nonNil(p.BotAuthors)})
+		if err != nil {
+			return fmt.Errorf("updating rule profile: %w", err)
 		}
-		for _, o := range us.ReviewerOverrides {
+		if tag.RowsAffected() == 0 {
+			return ErrProfileNotFound
+		}
+		if _, err := postgres.Exec(ctx, s.pool,
+			`DELETE FROM user_rule_profile_repos WHERE profile_id = $1`, []any{p.ID}); err != nil {
+			return fmt.Errorf("clearing profile repos: %w", err)
+		}
+		if _, err := postgres.Exec(ctx, s.pool,
+			`DELETE FROM user_rule_profile_reviewer_overrides WHERE profile_id = $1`, []any{p.ID}); err != nil {
+			return fmt.Errorf("clearing profile reviewer overrides: %w", err)
+		}
+		return s.writeProfileChildren(ctx, userLogin, p)
+	})
+	if errors.Is(err, ErrProfileNotFound) {
+		return err
+	}
+	return mapProfileConflict(err)
+}
+
+// DeleteProfile removes the user's profile (cascading to its children). It
+// returns ErrProfileNotFound if the id isn't the user's.
+func (s *UserStore) DeleteProfile(ctx context.Context, userLogin string, id int64) error {
+	tag, err := postgres.Exec(ctx, s.pool,
+		`DELETE FROM user_rule_profiles WHERE id = $1 AND user_login = $2`,
+		[]any{id, userLogin})
+	if err != nil {
+		return fmt.Errorf("deleting rule profile: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrProfileNotFound
+	}
+	return nil
+}
+
+// writeProfileChildren inserts a profile's repos and reviewer overrides. The
+// caller is responsible for the surrounding transaction and for clearing any
+// prior rows.
+func (s *UserStore) writeProfileChildren(ctx context.Context, userLogin string, p RuleProfile) error {
+	if !p.AllRepos {
+		for _, repo := range p.Repos {
 			if _, err := postgres.Exec(ctx, s.pool,
-				`INSERT INTO user_reviewer_overrides (user_login, label, reviewers) VALUES ($1, $2, $3)
-				 ON CONFLICT (user_login, label) DO UPDATE SET reviewers = EXCLUDED.reviewers`,
-				[]any{userLogin, o.Label, o.Reviewers}); err != nil {
-				return fmt.Errorf("inserting reviewer override: %w", err)
+				`INSERT INTO user_rule_profile_repos (profile_id, user_login, repo) VALUES ($1, $2, $3)`,
+				[]any{p.ID, userLogin, repo}); err != nil {
+				return fmt.Errorf("inserting profile repo: %w", err)
 			}
 		}
-		return nil
-	})
+	}
+	for _, o := range p.ReviewerOverrides {
+		if _, err := postgres.Exec(ctx, s.pool,
+			`INSERT INTO user_rule_profile_reviewer_overrides (profile_id, label, reviewers) VALUES ($1, $2, $3)`,
+			[]any{p.ID, o.Label, o.Reviewers}); err != nil {
+			return fmt.Errorf("inserting profile reviewer override: %w", err)
+		}
+	}
+	return nil
+}
+
+// mapProfileConflict translates the profile unique-constraint violations into
+// the sentinel errors the handler maps to a 409, leaving other errors as-is.
+func mapProfileConflict(err error) error {
+	var pgErr *pgconn.PgError
+	// 23505 is the SQLSTATE for unique_violation.
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		return err
+	}
+	switch pgErr.ConstraintName {
+	case "user_rule_profiles_all_repos_uniq":
+		return ErrDuplicateCatchAll
+	case "user_rule_profile_repos_user_login_repo_key":
+		return ErrRepoProfileConflict
+	default:
+		return err
+	}
 }
 
 // nonNil returns an empty slice for nil so JSON encodes "[]" and the Postgres

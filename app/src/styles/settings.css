@@ -5,7 +5,6 @@
    ============================================================ */
 
 /* ---------- shared atoms ---------- */
-.health { display: inline-flex; align-items: center; gap: 6px; }
 .hdot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .hdot.success { background: var(--state-success); }
 .hdot.warn    { background: var(--state-warn); }
@@ -18,8 +17,6 @@
   70%  { box-shadow: 0 0 0 5px rgba(74,222,128,0); }
   100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); }
 }
-.hlabel { font-size: 10.5px; color: var(--fg-2); }
-
 .badge.muted { color: var(--fg-3); background: var(--bg-3); }
 
 /* ai-block: subtle accented note used for the explanatory blurbs. */
@@ -138,11 +135,6 @@
 .set-head-top { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
 .set-title { display: flex; align-items: center; gap: 10px; }
 .set-title h1 { margin: 0; font-size: 20px; font-weight: 500; letter-spacing: -0.02em; color: var(--fg-0); }
-.set-saved {
-  margin-left: auto;
-  display: flex; align-items: center; gap: 7px;
-  font-size: 11px; color: var(--state-success);
-}
 .set-tabs { display: flex; gap: 4px; }
 .set-tab {
   display: inline-flex; align-items: center; gap: 7px;
@@ -165,9 +157,6 @@
 .set-sec-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .set-sec-head h3 { margin: 0; font-size: 13px; font-weight: 500; color: var(--fg-0); }
 .set-sec-head .count { font-size: 11px; color: var(--fg-3); }
-.set-sec-head .spacer { flex: 1; }
-.set-sec-head .legend { display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--fg-3); }
-.set-sec-head .legend .health { gap: 4px; }
 
 /* ---------- repo list ---------- */
 .repo-list {
@@ -178,7 +167,7 @@
 }
 .repo-list-head, .repo-row {
   display: grid;
-  grid-template-columns: 28px 1fr 200px 110px 150px;
+  grid-template-columns: 1fr 220px 140px;
   align-items: center; gap: 14px;
   padding: 0 14px;
 }
@@ -189,24 +178,81 @@
   border-bottom: 1px solid var(--border-1);
   background: var(--bg-1);
 }
-.repo-row {
-  min-height: 48px;
-  border-bottom: 1px solid var(--border-1);
-}
+.repo-row { min-height: 48px; border-bottom: 1px solid var(--border-1); }
 .repo-row:last-child { border-bottom: 0; }
 .repo-row:hover { background: var(--bg-3); }
 .repo-row.is-error { background: var(--stale-3); }
-.rr-health { display: flex; }
 .rr-name { display: flex; align-items: center; gap: 8px; color: var(--fg-2); min-width: 0; }
+.rr-badge {
+  font-size: 10.5px;
+  color: var(--accent); background: var(--bg-3);
+  border: 1px solid var(--border-1); border-radius: 3px;
+  padding: 1px 6px; flex-shrink: 0;
+}
 .rr-name .mono { color: var(--fg-0); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rr-stats { display: flex; align-items: center; gap: 12px; font-size: 11.5px; color: var(--fg-2); }
-.rr-needs { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); }
-.rr-err-text { color: var(--state-danger); }
-.rr-sync { font-size: 11px; color: var(--fg-3); }
+.rr-sync { font-size: 11px; color: var(--fg-3); min-width: 0; }
+.rr-sync-err {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--state-danger); min-width: 0;
+}
+.rr-sync-err svg { flex-shrink: 0; }
+.rr-sync-err span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rr-actions { display: flex; gap: 4px; justify-content: flex-end; }
 .rr-remove:hover { color: var(--state-danger); background: var(--state-danger-dim); }
 
 .repos-note { margin-top: 14px; border-radius: var(--r-md); font-size: 12.5px; }
+
+/* ---------- rule profiles ---------- */
+.profile-list { display: flex; flex-direction: column; gap: 16px; }
+.profile-card {
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.profile-head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 11px 12px 11px 16px;
+  border-bottom: 1px solid var(--border-1);
+  background: var(--bg-1);
+}
+.profile-head svg { color: var(--fg-2); flex-shrink: 0; }
+.profile-name {
+  flex: 1; min-width: 0;
+  background: transparent; border: 0; outline: 0;
+  color: var(--fg-0); font-size: 14px; font-weight: 500;
+  padding: 4px 2px; border-bottom: 1px solid transparent;
+}
+.profile-name:focus { border-bottom-color: var(--border-2); }
+.profile-del { flex-shrink: 0; color: var(--fg-3); }
+.profile-del:hover { color: var(--state-danger); background: var(--state-danger-dim); }
+.profile-body { padding: 14px 16px 16px; display: flex; flex-direction: column; }
+.profile-foot {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 11px; color: var(--fg-2);
+  padding: 10px 16px;
+  border-top: 1px solid var(--border-1); background: var(--bg-1);
+}
+.profile-add { align-self: flex-start; }
+
+/* ---------- repo scope picker ---------- */
+.repo-scope { display: flex; flex-direction: column; gap: 10px; }
+.scope-all { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: var(--fg-0); font-size: 13px; }
+.scope-all input { accent-color: var(--accent); cursor: pointer; }
+.scope-all-hint { font-size: 10.5px; color: var(--fg-3); }
+.scope-repos {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px;
+  padding: 10px 12px;
+  background: var(--bg-1); border: 1px solid var(--border-1); border-radius: var(--r-md);
+}
+.scope-repo { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; color: var(--fg-1); font-size: 12px; min-width: 0; }
+.scope-repo input { accent-color: var(--accent); cursor: pointer; }
+.scope-repo svg { color: var(--fg-3); flex-shrink: 0; }
+.scope-repo .mono { color: var(--fg-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scope-repo.locked { color: var(--fg-3); cursor: not-allowed; }
+.scope-repo.locked .mono { color: var(--fg-3); }
+.scope-taken { margin-left: auto; font-size: 10px; color: var(--fg-3); flex-shrink: 0; }
+.scope-empty { color: var(--fg-3); font-size: 11.5px; }
 
 /* ---------- rule cards ---------- */
 .rules-note { border-radius: var(--r-md); font-size: 12.5px; }
@@ -240,13 +286,6 @@
 .lr-x { padding: 4px 6px; }
 .lr-x:hover { color: var(--state-danger); }
 .lr-add { align-self: flex-start; margin-top: 2px; }
-
-.rules-foot {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 11px; color: var(--fg-2);
-  padding: 2px;
-}
-.rules-foot .hl { color: var(--fg-0); }
 
 /* ---------- suggestions ---------- */
 .sugg-head {

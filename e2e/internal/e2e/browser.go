@@ -188,8 +188,28 @@ func (b *Browser) GroupTooltip(groupID string) string {
 	return s
 }
 
-// FilterChips returns the quick-filter chip labels in render order. Use
-// to assert that "stale > Nd" reflects the configured stale_after_days.
+// StalePRs returns the PR numbers whose row shows a stale badge. Staleness is
+// computed server-side per repo profile, so this asserts a profile's stale
+// window reaches the rendered row.
+func (b *Browser) StalePRs() []int {
+	b.t.Helper()
+	var raw []string
+	const js = `Array.from(document.querySelectorAll('[data-pr-num]'))
+		.filter(el => Array.from(el.querySelectorAll('.badge')).some(badge => badge.textContent.includes('stale')))
+		.map(el => el.getAttribute('data-pr-num'))`
+	if err := chromedp.Run(b.tabCtx, chromedp.Evaluate(js, &raw)); err != nil {
+		b.t.Fatalf("e2e: StalePRs: %v", err)
+	}
+	out := make([]int, 0, len(raw))
+	for _, s := range raw {
+		var n int
+		_, _ = fmt.Sscanf(s, "%d", &n)
+		out = append(out, n)
+	}
+	return out
+}
+
+// FilterChips returns the quick-filter chip labels in render order.
 func (b *Browser) FilterChips() []string {
 	b.t.Helper()
 	var out []string
@@ -201,15 +221,14 @@ func (b *Browser) FilterChips() []string {
 }
 
 // SettingsRepoRow is the rendered state of one row on the Repositories settings
-// screen: the health dot's label and the stats cell text.
+// screen: its polling health.
 type SettingsRepoRow struct {
 	Health string `json:"health"`
-	Stats  string `json:"stats"`
 }
 
 // SettingsRepoRows returns the observed-repo rows on the Repositories settings
 // screen, keyed by slug. Call after GotoSettings("/settings/repos"). Lets tests
-// assert that RepoOverview's health and open/needs counts reach the DOM.
+// assert that RepoOverview's health reaches the DOM.
 func (b *Browser) SettingsRepoRows() map[string]SettingsRepoRow {
 	b.t.Helper()
 	out := map[string]SettingsRepoRow{}
@@ -217,9 +236,8 @@ func (b *Browser) SettingsRepoRows() map[string]SettingsRepoRow {
 		const out = {};
 		document.querySelectorAll('.repo-row').forEach(row => {
 			const slug = row.querySelector('.rr-name .mono')?.textContent.trim() ?? '';
-			const health = row.querySelector('.rr-health .health')?.getAttribute('title') ?? '';
-			const stats = row.querySelector('.rr-stats')?.textContent.trim() ?? '';
-			if (slug) out[slug] = { health, stats };
+			const health = row.classList.contains('is-error') ? 'lost access' : 'polling';
+			if (slug) out[slug] = { health };
 		});
 		return out;
 	})()`
@@ -263,6 +281,16 @@ func (b *Browser) Click(selector string) {
 	b.t.Helper()
 	if err := chromedp.Run(b.tabCtx, chromedp.Click(selector, chromedp.ByQuery)); err != nil {
 		b.t.Fatalf("e2e: Click(%q): %v", selector, err)
+	}
+}
+
+// WaitVisible blocks until the first element matching selector is visible.
+// Screenshot scenarios use it after a Click to let async-loaded content (like
+// the per-repo rules editor) render before capturing.
+func (b *Browser) WaitVisible(selector string) {
+	b.t.Helper()
+	if err := chromedp.Run(b.tabCtx, chromedp.WaitVisible(selector, chromedp.ByQuery)); err != nil {
+		b.t.Fatalf("e2e: WaitVisible(%q): %v", selector, err)
 	}
 }
 

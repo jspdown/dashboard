@@ -8,12 +8,20 @@ import (
 // unexported so tests can't reach fields the harness owns.
 type Option func(*options)
 
-// ReviewConfig is the review policy seeded for the viewer.
-type ReviewConfig struct {
+// Profile is a rule profile seeded for the viewer: a self-contained review
+// policy scoped to a list of repos or, when AllRepos is set, every observed repo
+// no specific profile claims. Zero StaleAfterDays / RecentlyMergedDays seed the
+// built-in defaults (see seedViewer).
+type Profile struct {
+	Name                     string
+	AllRepos                 bool
+	Repos                    []string
 	DefaultRequiredReviewers int
+	StaleAfterDays           int
+	RecentlyMergedDays       int
 	IgnoreLabels             []string
-	ReviewerOverrides        []ReviewerOverride
 	BotAuthors               []string
+	ReviewerOverrides        []ReviewerOverride
 }
 
 // ReviewerOverride pairs a PR label with a non-default reviewer count.
@@ -22,29 +30,17 @@ type ReviewerOverride struct {
 	Reviewers int
 }
 
-// FreshnessConfig is the freshness windows seeded for the viewer.
-type FreshnessConfig struct {
-	StaleAfterDays     int
-	RecentlyMergedDays int
-}
-
 type options struct {
-	viewer string
-	repos  []string
-	review ReviewConfig
-	fresh  FreshnessConfig
-	anchor time.Time
+	viewer   string
+	repos    []string
+	profiles []Profile
+	anchor   time.Time
 }
 
 func defaultOptions() options {
 	return options{
 		viewer: "alex",
 		repos:  []string{"acme/widget"},
-		review: ReviewConfig{DefaultRequiredReviewers: 2},
-		fresh: FreshnessConfig{
-			StaleAfterDays:     5,
-			RecentlyMergedDays: 7,
-		},
 		anchor: time.Now().UTC(),
 	}
 }
@@ -68,16 +64,11 @@ func WithRepo(slug string) Option {
 	}
 }
 
-// WithReview overrides the default review policy ({DefaultRequiredReviewers: 2}
-// with no ignore labels, overrides, or bot authors).
-func WithReview(rc ReviewConfig) Option {
-	return func(o *options) { o.review = rc }
-}
-
-// WithFreshness overrides the default freshness windows
-// (5d stale / 7d recently merged).
-func WithFreshness(fc FreshnessConfig) Option {
-	return func(o *options) { o.fresh = fc }
+// WithProfile seeds a rule profile for the viewer. Repeated calls accumulate.
+// With no profile, repos fall back to the built-in defaults (2 reviewers,
+// 5d stale, 7d recently merged), matching an unconfigured user.
+func WithProfile(p Profile) Option {
+	return func(o *options) { o.profiles = append(o.profiles, p) }
 }
 
 // WithAnchor pins the scenario time. Relative offsets in the Fake builder

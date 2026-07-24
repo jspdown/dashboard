@@ -50,16 +50,6 @@ export async function getBuildInfo() {
 }
 
 /**
- * Returns the runtime UI configuration: stale/merged windows and the
- * review-policy labels used to render group descriptions. The viewer
- * identity is delivered separately through /api/me.
- */
-export async function getConfig() {
-  const res = await apiFetch("/api/config");
-  return res.json();
-}
-
-/**
  * Returns the signed-in user: { login, avatar_url }. Populated by the
  * dashboard's TrustedHeader middleware from oauth2-proxy's headers.
  */
@@ -128,18 +118,39 @@ export async function recheckRepo(repo) {
   await mutate(`/api/settings/repos/${repo}/recheck`, { method: "POST" });
 }
 
-/** Returns the viewer's review rules (the editable Review rules screen shape). */
-export async function getRules() {
-  const res = await apiFetch("/api/settings/rules");
+/**
+ * Returns the viewer's rule profiles. Each is a self-contained review policy
+ * scoped to a list of repos or, when all_repos is set, every observed repo no
+ * specific profile claims:
+ * { id, name, all_repos, repos, default_required_reviewers, stale_after_days,
+ *   recently_merged_days, ignore_labels, bot_authors, reviewer_overrides }.
+ */
+export async function getProfiles() {
+  const res = await apiFetch("/api/settings/profiles");
   return res.json();
 }
 
-/** Replaces the viewer's review rules and returns the saved (normalized) shape. */
-export async function saveRules(rules) {
-  const res = await mutate("/api/settings/rules", {
-    method: "PUT",
+/** Creates a rule profile and returns the saved (normalized) shape with its id. */
+export async function createProfile(profile) {
+  const res = await mutate("/api/settings/profiles", {
+    method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(rules),
+    body: JSON.stringify(profile),
   });
   return res.json();
+}
+
+/** Replaces a rule profile and returns the saved (normalized) shape. */
+export async function updateProfile(id, profile) {
+  const res = await mutate(`/api/settings/profiles/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(profile),
+  });
+  return res.json();
+}
+
+/** Deletes a rule profile. */
+export async function deleteProfile(id) {
+  await mutate(`/api/settings/profiles/${id}`, { method: "DELETE" });
 }

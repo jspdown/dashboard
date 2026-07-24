@@ -11,7 +11,7 @@ import (
 // area/webui ignored, bot/light-review needs 1, renovate-with-github-actions[bot]
 // the only routed bot author. Used by every rules_test case.
 func testRules() *Rules {
-	return NewRules(UserSettings{
+	return NewRules(ReviewSettings{
 		DefaultRequiredReviewers: 2,
 		IgnoreLabels:             []string{"area/webui"},
 		ReviewerOverrides: []ReviewerOverride{
@@ -48,14 +48,14 @@ func TestRequiredReviewers(t *testing.T) {
 func TestRequiredReviewers_emptyConfig(t *testing.T) {
 	// Bare settings: no overrides, no ignore labels, default count is the
 	// zero value. Sanity check that rules don't read state outside the settings.
-	r := NewRules(UserSettings{})
+	r := NewRules(ReviewSettings{})
 	count, ignored := r.RequiredReviewers([]string{"area/webui"})
 	assert.Equal(t, 0, count)
 	assert.False(t, ignored)
 }
 
 func TestRequiredReviewers_multipleOverrides(t *testing.T) {
-	r := NewRules(UserSettings{
+	r := NewRules(ReviewSettings{
 		DefaultRequiredReviewers: 3,
 		ReviewerOverrides: []ReviewerOverride{
 			{Label: "tiny", Reviewers: 1},
@@ -556,7 +556,7 @@ func TestClassifyGroup(t *testing.T) {
 }
 
 func TestClassifyGroup_multipleBotAuthors(t *testing.T) {
-	r := NewRules(UserSettings{
+	r := NewRules(ReviewSettings{
 		DefaultRequiredReviewers: 2,
 		BotAuthors:               []string{"botA[bot]", "botB[bot]"},
 	})

@@ -1,9 +1,15 @@
 import { useState } from "react";
 
-import { addRepo, getRepos, getRepoSuggestions, recheckRepo, removeRepo } from "../api/index.js";
+import {
+  addRepo,
+  getRepos,
+  getRepoSuggestions,
+  recheckRepo,
+  removeRepo,
+} from "../api/index.js";
 import { useApi } from "../api/useApi.js";
 import Icon from "../components/Icon.jsx";
-import { HealthDot, RepoSuggestion, SettingsShell } from "../components/settings/atoms.jsx";
+import { RepoSuggestion, SettingsShell } from "../components/settings/atoms.jsx";
 
 // relativeTime renders an ISO timestamp as a short "8s / 4m / 2h / 3d ago".
 function relativeTime(iso) {
@@ -91,22 +97,20 @@ function RepoRow({ r, onChanged }) {
 
   return (
     <div className={"repo-row" + (isError ? " is-error" : "")}>
-      <div className="rr-health"><HealthDot status={r.health} /></div>
       <div className="rr-name">
         <Icon name="github" size={13} />
         <span className="mono">{r.repo}</span>
+        {r.profile ? <span className="rr-badge mono" title={`Review rules from the "${r.profile}" profile`}>{r.profile}</span> : null}
       </div>
-      <div className="rr-stats mono">
+      <div className="rr-sync mono">
         {isError ? (
-          <span className="rr-err-text">{r.error || "server lost access"}</span>
+          <span className="rr-sync-err" title={r.error || "server lost access"}>
+            <Icon name="alert" size={11} /><span>{r.error || "server lost access"}</span>
+          </span>
         ) : (
-          <>
-            <span>{r.open} open</span>
-            {r.needs > 0 && <span className="rr-needs"><span className="dot accent" />{r.needs} need you</span>}
-          </>
+          relativeTime(r.synced_at)
         )}
       </div>
-      <div className="rr-sync mono">{relativeTime(r.synced_at)}</div>
       <div className="rr-actions">
         {isError ? (
           <button type="button" className="btn" onClick={recheck} disabled={busy}>
@@ -158,8 +162,6 @@ export default function SettingsRepos() {
         <div className="set-sec-head">
           <h3>Observing</h3>
           <span className="count mono">{repos.length} {repos.length === 1 ? "repository" : "repositories"}</span>
-          <div className="spacer" />
-          <span className="legend mono"><HealthDot status="ok" /> polling <HealthDot status="error" /> lost access</span>
         </div>
 
         {repos.length === 0 ? (
@@ -170,7 +172,7 @@ export default function SettingsRepos() {
         ) : (
           <div className="repo-list">
             <div className="repo-list-head mono">
-              <div /><div>repository</div><div>pull requests</div><div>last sync</div><div />
+              <div>repository</div><div>last sync</div><div />
             </div>
             {repos.map((r) => <RepoRow key={r.repo} r={r} onChanged={refreshAll} />)}
           </div>

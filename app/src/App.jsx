@@ -1,4 +1,3 @@
-import { ConfigProvider } from "./api/ConfigProvider.jsx";
 import styles from "./App.module.css";
 import TopBar from "./components/TopBar.jsx";
 import { useRoute } from "./router.js";
@@ -20,11 +19,9 @@ function screenFor(route) {
 export default function App() {
   const route = useRoute();
   return (
-    <ConfigProvider>
-      <div className={styles.app}>
-        <TopBar route={route} />
-        <main className={styles.main}>{screenFor(route)}</main>
-      </div>
-    </ConfigProvider>
+    <div className={styles.app}>
+      <TopBar route={route} />
+      <main className={styles.main}>{screenFor(route)}</main>
+    </div>
   );
 }

@@ -31,10 +31,6 @@ func (s *PostgresService) List(ctx context.Context, opts ListOpts) ([]PullReques
 		return nil, errNoUserInContext
 	}
 
-	settings, err := s.userStore.GetSettings(ctx, u.Login)
-	if err != nil {
-		return nil, err
-	}
 	repos, err := s.userStore.ListRepos(ctx, u.Login)
 	if err != nil {
 		return nil, err
@@ -43,28 +39,57 @@ func (s *PostgresService) List(ctx context.Context, opts ListOpts) ([]PullReques
 		return []PullRequestView{}, nil
 	}
 
-	snapshots, err := s.store.ListSnapshotsForUser(ctx, u.Login, repos, settings.RecentlyMergedDays)
+	profiles, err := s.userStore.ListProfiles(ctx, u.Login)
 	if err != nil {
 		return nil, err
 	}
 
-	rules := NewRules(settings)
+	// Fetch one snapshot set wide enough for every repo's merged window, then
+	// narrow each merged PR to its own profile's window below.
+	snapshots, err := s.store.ListSnapshotsForUser(ctx, u.Login, repos, MaxRecentlyMergedWindow(profiles))
+	if err != nil {
+		return nil, err
+	}
+
+	// Rules are per-repo: each repo resolves to one profile (specific, else the
+	// all-repos catch-all, else built-in defaults). Cache the resolved settings
+	// and engine by repo so we build each once per request rather than per PR.
+	type repoRules struct {
+		settings ReviewSettings
+		rules    *Rules
+	}
+	byRepo := make(map[string]repoRules, len(repos))
+	rulesFor := func(repo string) repoRules {
+		if rr, ok := byRepo[repo]; ok {
+			return rr
+		}
+		settings := ResolveProfile(profiles, repo)
+		rr := repoRules{settings: settings, rules: NewRules(settings)}
+		byRepo[repo] = rr
+		return rr
+	}
 	now := time.Now()
 
 	out := make([]PullRequestView, 0, len(snapshots))
 	for _, snap := range snapshots {
 		latest := LatestReviewsByReviewer(snap.Reviews)
 
-		group := rules.ClassifyGroup(snap.PullRequest, u.Login, latest, snap.Labels, snap.ReviewRequests)
+		rr := rulesFor(snap.Repo)
+		group := rr.rules.ClassifyGroup(snap.PullRequest, u.Login, latest, snap.Labels, snap.ReviewRequests)
 		if group == "" {
 			continue
 		}
+		// The snapshot set used the widest merged window; drop merged PRs older
+		// than this repo's own window.
+		if group == GroupMerged && snap.MergedAt != nil && Age(now, *snap.MergedAt) >= rr.settings.RecentlyMergedDays {
+			continue
+		}
 
-		required, _ := rules.RequiredReviewers(snap.Labels)
-		out = append(out, newPullRequestView(snap, group, u.Login, latest, required, now))
+		required, _ := rr.rules.RequiredReviewers(snap.Labels)
+		out = append(out, newPullRequestView(snap, group, u.Login, latest, required, rr.settings.StaleAfterDays, now))
 	}
 
-	return s.filterAndSort(out, opts, settings.StaleAfterDays), nil
+	return s.filterAndSort(out, opts), nil
 }
 
 func (s *PostgresService) MarkViewed(ctx context.Context, githubID int64) error {
@@ -76,14 +101,13 @@ func (s *PostgresService) MarkViewed(ctx context.Context, githubID int64) error 
 }
 
 // RepoView is the per-repo row on the Repositories settings screen: its polling
-// health, the user's open/needs-review counts, and the last poll time.
+// health, the last poll time, and the rule profile that applies to it.
 type RepoView struct {
 	Repo     string     `json:"repo"`
 	Health   string     `json:"health"`
-	Open     int        `json:"open"`
-	Needs    int        `json:"needs"`
 	SyncedAt *time.Time `json:"synced_at,omitempty"`
 	Error    string     `json:"error,omitempty"`
+	Profile  string     `json:"profile,omitempty"`
 }
 
 // Repo health values, mirrored by the frontend HealthDot.
@@ -94,18 +118,13 @@ const (
 )
 
 // RepoOverview returns one row per repo the viewer observes, with polling health
-// and the viewer's open / needs-review counts for that repo. Backs the
-// Repositories settings screen.
+// and the last poll time. Backs the Repositories settings screen.
 func (s *PostgresService) RepoOverview(ctx context.Context) ([]RepoView, error) {
 	u, ok := auth.UserFrom(ctx)
 	if !ok {
 		return nil, errNoUserInContext
 	}
 
-	settings, err := s.userStore.GetSettings(ctx, u.Login)
-	if err != nil {
-		return nil, err
-	}
 	repos, err := s.userStore.ListRepos(ctx, u.Login)
 	if err != nil {
 		return nil, err
@@ -118,22 +137,10 @@ func (s *PostgresService) RepoOverview(ctx context.Context) ([]RepoView, error) 
 	if err != nil {
 		return nil, err
 	}
-	snapshots, err := s.store.ListSnapshotsForUser(ctx, u.Login, repos, settings.RecentlyMergedDays)
+
+	profiles, err := s.userStore.ListProfiles(ctx, u.Login)
 	if err != nil {
 		return nil, err
-	}
-
-	rules := NewRules(settings)
-	open := make(map[string]int, len(repos))
-	needs := make(map[string]int, len(repos))
-	for _, snap := range snapshots {
-		if snap.Status == StatusOpen {
-			open[snap.Repo]++
-		}
-		latest := LatestReviewsByReviewer(snap.Reviews)
-		if rules.ClassifyGroup(snap.PullRequest, u.Login, latest, snap.Labels, snap.ReviewRequests) == GroupReview {
-			needs[snap.Repo]++
-		}
 	}
 
 	out := make([]RepoView, 0, len(repos))
@@ -142,9 +149,10 @@ func (s *PostgresService) RepoOverview(ctx context.Context) ([]RepoView, error) 
 		view := RepoView{
 			Repo:     repo,
 			Health:   repoHealth(st),
-			Open:     open[repo],
-			Needs:    needs[repo],
 			SyncedAt: repoSyncedAt(st),
+		}
+		if p := matchProfile(profiles, repo); p != nil {
+			view.Profile = p.Name
 		}
 		if st.LastError != nil {
 			view.Error = *st.LastError
@@ -177,10 +185,10 @@ func repoSyncedAt(st RepoStatus) *time.Time {
 	return st.LastSyncedAt
 }
 
-func (s *PostgresService) filterAndSort(prs []PullRequestView, opts ListOpts, staleAfterDays int) []PullRequestView {
+func (s *PostgresService) filterAndSort(prs []PullRequestView, opts ListOpts) []PullRequestView {
 	out := make([]PullRequestView, 0, len(prs))
 	for _, pr := range prs {
-		if !matchFilter(pr, opts.Filter, staleAfterDays) {
+		if !matchFilter(pr, opts.Filter) {
 			continue
 		}
 		out = append(out, pr)

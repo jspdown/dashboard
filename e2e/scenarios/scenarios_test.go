@@ -22,7 +22,9 @@ func TestIgnoreLabelHidesPRFromReviewQueue(t *testing.T) {
 	h := e2e.Start(t,
 		e2e.WithViewer("alice"),
 		e2e.WithRepo("acme/widget"),
-		e2e.WithReview(e2e.ReviewConfig{
+		e2e.WithProfile(e2e.Profile{
+			Name:                     "All repos",
+			AllRepos:                 true,
 			DefaultRequiredReviewers: 2,
 			IgnoreLabels:             []string{"area/webui"},
 		}),
@@ -59,7 +61,9 @@ func TestReviewerOverrideBypassesDefaultCount(t *testing.T) {
 	h := e2e.Start(t,
 		e2e.WithViewer("alice"),
 		e2e.WithRepo("acme/widget"),
-		e2e.WithReview(e2e.ReviewConfig{
+		e2e.WithProfile(e2e.Profile{
+			Name:                     "All repos",
+			AllRepos:                 true,
 			DefaultRequiredReviewers: 2,
 			ReviewerOverrides: []e2e.ReviewerOverride{
 				{Label: "bot/light-review", Reviewers: 1},
@@ -82,13 +86,6 @@ func TestReviewerOverrideBypassesDefaultCount(t *testing.T) {
 	// the review queue.
 	assert.Empty(t, h.Browser.PRsInGroup("review"),
 		"override-met PR (1 reviewer needed, 1 approved) must not show in review queue")
-
-	// Tooltip on the review group surfaces the override clause from
-	// the config so adopters can see what's enforced.
-	tip := h.Browser.GroupTooltip("review")
-	require.NotEmpty(t, tip, "review group tooltip must be config-driven")
-	assert.Contains(t, tip, "bot/light-review",
-		"tooltip should name the configured override label")
 }
 
 // TestBotAuthorRoutesToRenovateGroup exercises the bot_authors path:
@@ -100,7 +97,9 @@ func TestBotAuthorRoutesToRenovateGroup(t *testing.T) {
 	h := e2e.Start(t,
 		e2e.WithViewer("alice"),
 		e2e.WithRepo("acme/widget"),
-		e2e.WithReview(e2e.ReviewConfig{
+		e2e.WithProfile(e2e.Profile{
+			Name:                     "All repos",
+			AllRepos:                 true,
 			DefaultRequiredReviewers: 2,
 			BotAuthors:               []string{"renovate-bot[bot]"},
 		}),
@@ -120,23 +119,50 @@ func TestBotAuthorRoutesToRenovateGroup(t *testing.T) {
 		"PRs from regular authors keep going to the review queue")
 }
 
-// TestRepositoriesScreenReflectsPollHealthAndCounts exercises the per-user
-// RepoOverview path end-to-end: after a poll, the Repositories settings screen
-// must show the observed repo as healthy with the viewer's open and
-// needs-review counts, the numbers PostgresService.RepoOverview computes.
-func TestRepositoriesScreenReflectsPollHealthAndCounts(t *testing.T) {
+// TestSpecificProfileOverridesCatchAll exercises profile resolution end-to-end:
+// an all-repositories profile needs one reviewer, but a specific profile for one
+// repo needs two. A same-shaped PR (one approval) clears the review queue in the
+// catch-all repo yet stays in it for the repo the specific profile claims.
+func TestSpecificProfileOverridesCatchAll(t *testing.T) {
+	t.Parallel()
+	h := e2e.Start(t,
+		e2e.WithViewer("alice"),
+		e2e.WithRepo("acme/strict"),
+		e2e.WithRepo("acme/relaxed"),
+		e2e.WithProfile(e2e.Profile{Name: "Baseline", AllRepos: true, DefaultRequiredReviewers: 1}),
+		e2e.WithProfile(e2e.Profile{Name: "Strict", Repos: []string{"acme/strict"}, DefaultRequiredReviewers: 2}),
+	)
+
+	// One approval from carol on a same-shaped PR in each repo.
+	h.Fake.Repo("acme/strict").
+		PR(1).Title("Tighten auth").Author("bob").Open().
+		AddReview("carol", "approved", -10*time.Minute)
+	h.Fake.Repo("acme/relaxed").
+		PR(2).Title("Tweak copy").Author("bob").Open().
+		AddReview("carol", "approved", -10*time.Minute)
+
+	h.Poll("acme/strict")
+	h.Poll("acme/relaxed")
+	h.Reload()
+
+	// Under the catch-all (1) the single approval clears review; the specific
+	// profile on acme/strict needs 2, so that PR stays put.
+	assert.Equal(t, []int{1}, h.Browser.PRsInGroup("review"),
+		"specific profile (needs 2, has 1 approval) must keep only its repo's PR in review")
+}
+
+// TestRepositoriesScreenReflectsPollHealth exercises the per-user RepoOverview
+// path end-to-end: after a poll, the Repositories settings screen must show the
+// observed repo as healthy, the health PostgresService.RepoOverview computes.
+func TestRepositoriesScreenReflectsPollHealth(t *testing.T) {
 	t.Parallel()
 	h := e2e.Start(t,
 		e2e.WithViewer("alice"),
 		e2e.WithRepo("acme/widget"),
-		e2e.WithReview(e2e.ReviewConfig{DefaultRequiredReviewers: 2}),
 	)
 
-	// One open PR needing alice's review, one open PR she authored.
 	h.Fake.Repo("acme/widget").
 		PR(11).Title("Needs review").Author("bob").Open()
-	h.Fake.Repo("acme/widget").
-		PR(12).Title("Mine").Author("alice").Open()
 
 	h.Poll("acme/widget")
 
@@ -144,24 +170,23 @@ func TestRepositoriesScreenReflectsPollHealthAndCounts(t *testing.T) {
 	rows := h.Browser.SettingsRepoRows()
 
 	require.Contains(t, rows, "acme/widget", "observed repo must render a row")
-	row := rows["acme/widget"]
-	assert.Equal(t, "polling", row.Health, "a polled repo with no error reads as healthy")
-	assert.Contains(t, row.Stats, "2 open", "both open PRs are counted")
-	assert.Contains(t, row.Stats, "1 need you", "the un-reviewed PR by another author needs the viewer")
+	assert.Equal(t, "polling", rows["acme/widget"].Health, "a polled repo with no error reads as healthy")
 }
 
-// TestStaleAfterDaysFlowsThroughChip exercises the freshness path: the
-// stale-filter chip text must reflect the configured stale_after_days,
-// and the search placeholder must reflect the configured viewer login.
-// Both are surfaces a fresh adopter notices first.
-func TestStaleAfterDaysFlowsThroughChip(t *testing.T) {
+// TestProfileStaleWindowFlagsRow exercises the per-profile freshness path: a PR
+// older than its profile's stale window is flagged stale server-side, the badge
+// reaches its row, and the search placeholder reflects the configured viewer.
+func TestProfileStaleWindowFlagsRow(t *testing.T) {
 	t.Parallel()
 	h := e2e.Start(t,
 		e2e.WithViewer("priya"),
 		e2e.WithRepo("acme/widget"),
-		e2e.WithFreshness(e2e.FreshnessConfig{
-			StaleAfterDays:     10,
-			RecentlyMergedDays: 14,
+		e2e.WithProfile(e2e.Profile{
+			Name:                     "All repos",
+			AllRepos:                 true,
+			DefaultRequiredReviewers: 2,
+			StaleAfterDays:           10,
+			RecentlyMergedDays:       14,
 		}),
 	)
 
@@ -171,19 +196,14 @@ func TestStaleAfterDaysFlowsThroughChip(t *testing.T) {
 	h.Poll("acme/widget")
 	h.Reload()
 
+	assert.Contains(t, h.Browser.StalePRs(), 1,
+		"a PR older than the profile's 10d stale window must show a stale badge")
+
 	chips := h.Browser.FilterChips()
-	require.NotEmpty(t, chips, "chip row must render")
-	assert.Contains(t, chips, "stale > 10d",
-		"chip text must reflect configured stale_after_days, got chips=%v", chips)
+	require.Contains(t, chips, "stale", "the stale filter chip must render")
 
 	assert.Equal(t,
 		"filter… repo:auth ci:failing author:priya",
 		h.Browser.SearchPlaceholder(),
 		"placeholder must reflect configured viewer login")
-
-	// The "Recently merged" tooltip must also reflect the configured
-	// window so adopters with a different freshness see the right text.
-	mergedTip := h.Browser.GroupTooltip("merged")
-	assert.Contains(t, mergedTip, "14 days",
-		"merged-group tooltip must reflect recently_merged_days")
 }

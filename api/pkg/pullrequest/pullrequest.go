@@ -16,6 +16,9 @@ type PullRequestView struct {
 	Checks   string   `json:"checks"`
 	Comments int      `json:"comments"`
 	Blocking []string `json:"blocking"`
+	// Stale flags an open PR older than its repo profile's stale window, so the
+	// frontend can badge it without knowing the per-repo threshold.
+	Stale bool `json:"stale"`
 	// Approvals / RequiredApprovals give review progress against the configured
 	// policy ("2 LGTM") for the "n/m approved" fraction. MergeState is that
 	// policy's merge-readiness verdict (see MergeReadiness). All three are

@@ -2,26 +2,10 @@ import { useState } from "react";
 
 import Avatar from "../Avatar.jsx";
 import Icon from "../Icon.jsx";
+import { nextOverrideId } from "./overrides.js";
 
 // Shared atoms for the settings screens. They render global class names (see
 // settings.css).
-
-const HEALTH = {
-  ok: { cls: "success", label: "polling" },
-  checking: { cls: "warn", label: "checking" },
-  error: { cls: "danger", label: "lost access" },
-};
-
-/** HealthDot shows a repo's polling status as a colored (optionally pulsing) dot. */
-export function HealthDot({ status, withLabel }) {
-  const m = HEALTH[status] || HEALTH.ok;
-  return (
-    <span className={"health " + m.cls} title={m.label}>
-      <span className={"hdot " + m.cls + (status !== "error" ? " live" : "")} />
-      {withLabel ? <span className="mono hlabel">{m.label}</span> : null}
-    </span>
-  );
-}
 
 /** Stepper is a numeric +/- control, clamped to [min, max]. */
 export function Stepper({ value, onChange, min = 0, max = 99, suffix }) {
@@ -70,6 +54,80 @@ export function ChipInput({ chips, onAdd, onRemove, placeholder, tone = "label" 
   );
 }
 
+/** ReviewerOverridesEditor edits a list of per-label required-reviewer counts.
+ * `overrides` rows carry a client-only `_id`; `onChange` receives the next list. */
+export function ReviewerOverridesEditor({ overrides, onChange, max = 10 }) {
+  const setRow = (i, patch) => onChange(overrides.map((o, idx) => (idx === i ? { ...o, ...patch } : o)));
+  return (
+    <div className="label-rules">
+      {overrides.map((lr, i) => (
+        <div className="label-rule" key={lr._id}>
+          <span className="ci-chip label">
+            <Icon name="tag" size={10} />
+            <input
+              className="ci-field mono"
+              style={{ minWidth: 100 }}
+              value={lr.label}
+              placeholder="label"
+              onChange={(e) => setRow(i, { label: e.target.value })}
+            />
+          </span>
+          <span className="lr-arrow mono">needs</span>
+          <Stepper value={lr.reviewers} onChange={(v) => setRow(i, { reviewers: v })} min={0} max={max} />
+          <button
+            type="button"
+            className="btn ghost lr-x"
+            onClick={() => onChange(overrides.filter((_, idx) => idx !== i))}
+            aria-label="remove override"
+          >
+            <Icon name="x" size={11} />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="btn ghost lr-add"
+        onClick={() => onChange([...overrides, { label: "", reviewers: 1, _id: nextOverrideId() }])}
+      >
+        <Icon name="plus" size={11} />Add label override
+      </button>
+    </div>
+  );
+}
+
+/** RepoScopePicker selects which repos a profile targets. "All repositories"
+ * makes it the catch-all; otherwise each observed repo is a toggle. A repo
+ * already claimed by another profile is disabled, naming the owner. */
+export function RepoScopePicker({ allRepos, selected, options = [], onToggleAll, onToggleRepo }) {
+  return (
+    <div className="repo-scope">
+      <label className="scope-all">
+        <input type="checkbox" checked={allRepos} onChange={(e) => onToggleAll(e.target.checked)} />
+        <span>All repositories</span>
+        <span className="scope-all-hint mono">every observed repo no other profile claims</span>
+      </label>
+      {allRepos ? null : (
+        <div className="scope-repos">
+          {options.length === 0
+            ? <span className="scope-empty mono">Add repositories on the Repositories tab first.</span>
+            : options.map((o) => {
+              const checked = selected.includes(o.repo);
+              const locked = !checked && o.takenBy;
+              return (
+                <label key={o.repo} className={"scope-repo" + (locked ? " locked" : "")} title={locked ? `Already in "${o.takenBy}"` : undefined}>
+                  <input type="checkbox" checked={checked} disabled={locked} onChange={() => onToggleRepo(o.repo)} />
+                  <Icon name="github" size={12} />
+                  <span className="mono">{o.repo}</span>
+                  {locked ? <span className="scope-taken mono">in {o.takenBy}</span> : null}
+                </label>
+              );
+            })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** RepoSuggestion is a team-observed repo the viewer can add in one click. */
 export function RepoSuggestion({ repo, observers = [], onAdd, adding }) {
   return (
@@ -96,7 +154,7 @@ const TABS = [
   { id: "rules", label: "Review rules", icon: "sliders", href: "#/settings/rules" },
 ];
 
-/** SettingsShell renders the settings header, tab nav, and instant-save badge.
+/** SettingsShell renders the settings header and tab nav.
  * `ready` flips data-settings-ready once the screen's data has loaded, which the
  * e2e/screenshot harness waits on (mirrors the dashboard's data-prs-loaded). */
 export function SettingsShell({ tab, ready = true, children }) {
@@ -108,7 +166,6 @@ export function SettingsShell({ tab, ready = true, children }) {
             <Icon name="settings" size={15} />
             <h1>Settings</h1>
           </div>
-          <div className="set-saved mono"><span className="hdot success live" />changes apply instantly</div>
         </div>
         <nav className="set-tabs">
           {TABS.map((t) => (

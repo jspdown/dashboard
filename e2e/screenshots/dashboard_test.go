@@ -27,7 +27,9 @@ func demoOpts() []e2e.Option {
 	opts := make([]e2e.Option, 0, 2+len(repos))
 	opts = append(opts,
 		e2e.WithViewer(viewer),
-		e2e.WithReview(e2e.ReviewConfig{
+		e2e.WithProfile(e2e.Profile{
+			Name:                     "Team defaults",
+			AllRepos:                 true,
 			DefaultRequiredReviewers: 2,
 			IgnoreLabels:             []string{"area/webui"},
 			ReviewerOverrides: []e2e.ReviewerOverride{

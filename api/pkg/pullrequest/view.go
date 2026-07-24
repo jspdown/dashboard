@@ -12,7 +12,7 @@ import (
 // latest-review map. It calls the view-bound rules (RollupCI, BlockingUsers,
 // ComputeActivity) and the formatting helpers (ChecksLabel, Age,
 // HumanizeMerged) so the composition layer stays formatting-free.
-func newPullRequestView(snap PullRequestSnapshot, group, viewer string, latest map[string]Review, required int, now time.Time) PullRequestView {
+func newPullRequestView(snap PullRequestSnapshot, group, viewer string, latest map[string]Review, required, staleAfterDays int, now time.Time) PullRequestView {
 	ciStatus, done, total := RollupCI(snap.CheckRuns)
 
 	view := PullRequestView{
@@ -40,6 +40,7 @@ func newPullRequestView(snap PullRequestSnapshot, group, viewer string, latest m
 		view.Merged = HumanizeMerged(now, *snap.MergedAt)
 	} else {
 		view.Age = Age(now, snap.CreatedAt)
+		view.Stale = view.Age >= staleAfterDays
 	}
 	if group == GroupMine || group == GroupReviewed {
 		applyActivity(&view, ComputeActivity(snap), snap.View != nil)

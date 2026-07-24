@@ -18,21 +18,41 @@ func seedViewer(ctx context.Context, pool *pgxpool.Pool, o options) error {
 		}
 	}
 
-	overrides := make([]pullrequest.ReviewerOverride, len(o.review.ReviewerOverrides))
-	for i, ov := range o.review.ReviewerOverrides {
-		overrides[i] = pullrequest.ReviewerOverride{Label: ov.Label, Reviewers: ov.Reviewers}
-	}
+	for _, p := range o.profiles {
+		overrides := make([]pullrequest.ReviewerOverride, len(p.ReviewerOverrides))
+		for i, ov := range p.ReviewerOverrides {
+			overrides[i] = pullrequest.ReviewerOverride{Label: ov.Label, Reviewers: ov.Reviewers}
+		}
 
-	settings := pullrequest.UserSettings{
-		DefaultRequiredReviewers: o.review.DefaultRequiredReviewers,
-		StaleAfterDays:           o.fresh.StaleAfterDays,
-		RecentlyMergedDays:       o.fresh.RecentlyMergedDays,
-		IgnoreLabels:             o.review.IgnoreLabels,
-		BotAuthors:               o.review.BotAuthors,
-		ReviewerOverrides:        overrides,
-	}
-	if err := store.SaveSettings(ctx, o.viewer, settings); err != nil {
-		return fmt.Errorf("seed settings: %w", err)
+		name := p.Name
+		if name == "" {
+			name = "Rules"
+		}
+		stale := p.StaleAfterDays
+		if stale == 0 {
+			stale = pullrequest.DefaultStaleAfterDays
+		}
+		merged := p.RecentlyMergedDays
+		if merged == 0 {
+			merged = pullrequest.DefaultRecentlyMergedDays
+		}
+
+		profile := pullrequest.RuleProfile{
+			Name:     name,
+			AllRepos: p.AllRepos,
+			Repos:    p.Repos,
+			ReviewSettings: pullrequest.ReviewSettings{
+				DefaultRequiredReviewers: p.DefaultRequiredReviewers,
+				StaleAfterDays:           stale,
+				RecentlyMergedDays:       merged,
+				IgnoreLabels:             p.IgnoreLabels,
+				BotAuthors:               p.BotAuthors,
+				ReviewerOverrides:        overrides,
+			},
+		}
+		if _, err := store.CreateProfile(ctx, o.viewer, profile); err != nil {
+			return fmt.Errorf("seed profile %q: %w", name, err)
+		}
 	}
 	return nil
 }
